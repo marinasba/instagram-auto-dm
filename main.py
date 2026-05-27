@@ -1,10 +1,10 @@
 import os
 import json
 import logging
+import random
 import httpx
 from fastapi import FastAPI, Request, Query, Depends, HTTPException
 from fastapi.responses import PlainTextResponse, HTMLResponse
-from pydantic import BaseModel
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -95,6 +95,11 @@ ADMIN_HTML = """<!DOCTYPE html>
 
 <div id="keywords"></div>
 
+<h2 style="margin-top:32px;margin-bottom:12px;color:#4a7c59;">Réponses aux commentaires</h2>
+<p class="subtitle">Une réponse sera choisie au hasard pour chaque commentaire</p>
+<div id="replies" class="card" style="margin-bottom:16px;"></div>
+<button class="btn btn-add" onclick="addReply()" style="margin-bottom:16px;">+ Ajouter une réponse</button>
+
 <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
 
 <div class="toast" id="toast">Enregistré !</div>
@@ -102,11 +107,15 @@ ADMIN_HTML = """<!DOCTYPE html>
 <script>
 const TOKEN = new URLSearchParams(location.search).get('token');
 let keywords = {};
+let replies = [];
 
 async function load() {
-  const r = await fetch('/api/keywords?token=' + TOKEN);
-  keywords = await r.json();
+  const r = await fetch('/api/config?token=' + TOKEN);
+  const data = await r.json();
+  keywords = data.keywords;
+  replies = data.replies;
   render();
+  renderReplies();
 }
 
 function render() {
@@ -124,6 +133,17 @@ function render() {
   `).join('');
 }
 
+function renderReplies() {
+  const el = document.getElementById('replies');
+  if (!replies.length) { el.innerHTML = '<div class="empty">Aucune réponse configurée</div>'; return; }
+  el.innerHTML = replies.map((r, i) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <input type="text" value="${r}" onchange="replies[${i}]=this.value" style="margin:0;flex:1;">
+      <button class="btn btn-delete" onclick="replies.splice(${i},1);renderReplies();">X</button>
+    </div>
+  `).join('');
+}
+
 function addNew() {
   const kw = prompt('Nouveau mot-clé (ex: CHARIOT, GUIDE, TISANE) :');
   if (!kw) return;
@@ -134,6 +154,12 @@ function addNew() {
   document.querySelector('.card:last-child textarea').focus();
 }
 
+function addReply() {
+  replies.push('');
+  renderReplies();
+  document.querySelector('#replies input:last-of-type').focus();
+}
+
 function remove(k) {
   if (!confirm('Supprimer le mot-clé ' + k + ' ?')) return;
   delete keywords[k];
@@ -141,10 +167,10 @@ function remove(k) {
 }
 
 async function saveAll() {
-  await fetch('/api/keywords?token=' + TOKEN, {
+  await fetch('/api/config?token=' + TOKEN, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(keywords)
+    body: JSON.stringify({keywords, replies: replies.filter(r => r.trim())})
   });
   const t = document.getElementById('toast');
   t.style.display = 'block';
@@ -167,6 +193,20 @@ async def admin_page(token: str = Query(default="")):
 @app.get("/api/keywords")
 async def get_keywords(_=Depends(check_admin)):
     return CONFIG["keywords"]
+
+
+@app.get("/api/config")
+async def get_config(_=Depends(check_admin)):
+    return {"keywords": CONFIG["keywords"], "replies": CONFIG.get("replies", [])}
+
+
+@app.put("/api/config")
+async def update_config(request: Request, _=Depends(check_admin)):
+    data = await request.json()
+    CONFIG["keywords"] = data.get("keywords", {})
+    CONFIG["replies"] = data.get("replies", [])
+    save_config(CONFIG)
+    return {"status": "ok"}
 
 
 @app.put("/api/keywords")
@@ -214,6 +254,7 @@ async def handle_webhook(request: Request):
             for keyword, message in CONFIG["keywords"].items():
                 if keyword.upper() in comment_text:
                     await send_dm(comment_id, message, username, keyword)
+                    await reply_to_comment(comment_id, username)
                     break
 
     return {"status": "ok"}
@@ -235,3 +276,20 @@ async def send_dm(comment_id: str, message: str, username: str, keyword: str):
         logger.info(f"DM envoye a @{username} (mot-cle: {keyword})")
     else:
         logger.error(f"Erreur DM @{username}: {resp.status_code} - {resp.text}")
+
+
+async def reply_to_comment(comment_id: str, username: str):
+    replies = CONFIG.get("replies", [])
+    if not replies:
+        return
+    reply_text = random.choice(replies)
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{GRAPH_API}/{comment_id}/replies",
+            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+            json={"message": reply_text},
+        )
+    if resp.status_code == 200:
+        logger.info(f"Reponse commentaire @{username}: {reply_text}")
+    else:
+        logger.error(f"Erreur reponse commentaire @{username}: {resp.status_code} - {resp.text}")
