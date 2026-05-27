@@ -125,19 +125,21 @@ ADMIN_HTML = """<!DOCTYPE html>
 <p class="subtitle">gariguettes_fr</p>
 
 <div class="tabs">
-  <button class="tab active" onclick="switchTab('keywords')">Mots-cles</button>
-  <button class="tab" onclick="switchTab('replies')">Reponses aux commentaires</button>
+  <button class="tab active" onclick="switchTab('keywords')">Mots-cl\u00e9s</button>
+  <button class="tab" onclick="switchTab('replies')">R\u00e9ponses aux commentaires</button>
 </div>
 
+<button class="btn btn-save" onclick="saveAll()" style="margin-bottom:16px;">Enregistrer</button>
+
 <div id="tab-keywords" class="tab-content active">
-  <button class="btn btn-add" onclick="addNew()">+ Ajouter un mot-cle</button>
+  <button class="btn btn-add" onclick="addNew()">+ Ajouter un mot-cl\u00e9</button>
   <div id="keywords"></div>
   <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
 </div>
 
 <div id="tab-replies" class="tab-content">
-  <button class="btn btn-add" onclick="addReply()">+ Ajouter une reponse</button>
-  <p class="subtitle">Une reponse sera choisie au hasard pour chaque commentaire</p>
+  <button class="btn btn-add" onclick="addReply()">+ Ajouter une r\u00e9ponse</button>
+  <p class="subtitle">Une r\u00e9ponse sera choisie au hasard pour chaque commentaire</p>
   <div id="replies" class="card" style="margin-bottom:16px;"></div>
   <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
 </div>
@@ -180,7 +182,7 @@ function render() {
 
 function renderReplies() {
   const el = document.getElementById('replies');
-  if (!replies.length) { el.innerHTML = '<div class="empty">Aucune réponse configurée</div>'; return; }
+  if (!replies.length) { el.innerHTML = '<div class="empty">Aucune r\u00e9ponse configur\u00e9e</div>'; return; }
   el.innerHTML = replies.map((r, i) => `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
       <input type="text" value="${r}" onchange="replies[${i}]=this.value" style="margin:0;flex:1;">
@@ -221,7 +223,7 @@ async function saveAll() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({keywords, replies: replies.filter(r => r.trim())})
   });
-  btns.forEach(btn => { btn.textContent = 'Enregistre !'; btn.classList.add('saved'); });
+  btns.forEach(btn => { btn.textContent = 'Enregistr\u00e9 !'; btn.classList.add('saved'); });
   setTimeout(() => btns.forEach(btn => { btn.textContent = 'Enregistrer'; btn.classList.remove('saved'); }), 2500);
 }
 
