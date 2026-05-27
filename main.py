@@ -10,27 +10,39 @@ app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("insta-dm")
 
-DATA_DIR = "/data"
-PERSISTENT_CONFIG = os.path.join(DATA_DIR, "config.json")
-DEFAULT_CONFIG = "config.json"
+import base64
+
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = "marinasba/instagram-auto-dm"
+CONFIG_FILE = "config.json"
 
 
 def load_config():
-    if os.path.exists(PERSISTENT_CONFIG):
-        with open(PERSISTENT_CONFIG) as f:
-            return json.load(f)
-    with open(DEFAULT_CONFIG) as f:
-        config = json.load(f)
-    save_config(config)
-    return config
+    with open(CONFIG_FILE) as f:
+        return json.load(f)
 
 
 def save_config(config):
-    if os.path.isdir(DATA_DIR):
-        with open(PERSISTENT_CONFIG, "w") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-    with open(DEFAULT_CONFIG, "w") as f:
+    with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+async def save_config_to_github(config):
+    if not GITHUB_TOKEN:
+        return
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/contents/{CONFIG_FILE}",
+            headers={"Authorization": f"Bearer {GITHUB_TOKEN}"},
+        )
+        sha = r.json().get("sha", "") if r.status_code == 200 else ""
+        content = base64.b64encode(json.dumps(config, indent=2, ensure_ascii=False).encode()).decode()
+        await client.put(
+            f"https://api.github.com/repos/{GITHUB_REPO}/contents/{CONFIG_FILE}",
+            headers={"Authorization": f"Bearer {GITHUB_TOKEN}"},
+            json={"message": "Update config via admin", "content": content, "sha": sha},
+        )
+    logger.info("Config sauvegardee sur GitHub")
 
 
 CONFIG = load_config()
@@ -242,6 +254,7 @@ async def update_config(request: Request, _=Depends(check_admin)):
     CONFIG["keywords"] = data.get("keywords", {})
     CONFIG["replies"] = data.get("replies", [])
     save_config(CONFIG)
+    await save_config_to_github(CONFIG)
     return {"status": "ok"}
 
 
