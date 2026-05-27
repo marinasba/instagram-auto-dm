@@ -85,7 +85,13 @@ ADMIN_HTML = """<!DOCTYPE html>
   .btn-add:hover { background: #f0f7f2; }
   textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-family: inherit; font-size: 0.9em; resize: vertical; min-height: 100px; }
   input[type=text] { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; font-family: inherit; font-size: 1em; margin-bottom: 12px; }
-  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #4a7c59; color: white; padding: 12px 24px; border-radius: 8px; display: none; font-weight: 600; }
+  .tabs { display: flex; gap: 0; margin-bottom: 20px; }
+  .tab { flex: 1; padding: 12px; text-align: center; font-weight: 600; font-size: 1em; cursor: pointer; border: none; background: white; color: #888; border-bottom: 3px solid #ddd; transition: all 0.2s; }
+  .tab.active { color: #4a7c59; border-bottom-color: #4a7c59; }
+  .tab:first-child { border-radius: 8px 0 0 0; }
+  .tab:last-child { border-radius: 0 8px 0 0; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
   .empty { text-align: center; color: #999; padding: 40px; }
 </style>
 </head>
@@ -93,24 +99,35 @@ ADMIN_HTML = """<!DOCTYPE html>
 <h1>Messages Auto Instagram</h1>
 <p class="subtitle">gariguettes_fr</p>
 
-<button class="btn btn-add" onclick="addNew()">+ Ajouter un mot-clé</button>
-<button class="btn btn-save" onclick="saveAll()" style="margin-bottom:16px;">Enregistrer</button>
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('keywords')">Mots-cles</button>
+  <button class="tab" onclick="switchTab('replies')">Reponses aux commentaires</button>
+</div>
 
-<div id="keywords"></div>
+<div id="tab-keywords" class="tab-content active">
+  <button class="btn btn-add" onclick="addNew()">+ Ajouter un mot-cle</button>
+  <div id="keywords"></div>
+  <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
+</div>
 
-<h2 style="margin-top:32px;margin-bottom:12px;color:#4a7c59;">Réponses aux commentaires</h2>
-<p class="subtitle">Une réponse sera choisie au hasard pour chaque commentaire</p>
-<div id="replies" class="card" style="margin-bottom:16px;"></div>
-<button class="btn btn-add" onclick="addReply()" style="margin-bottom:16px;">+ Ajouter une réponse</button>
-
-<button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
-
-<div class="toast" id="toast">Enregistré !</div>
+<div id="tab-replies" class="tab-content">
+  <button class="btn btn-add" onclick="addReply()">+ Ajouter une reponse</button>
+  <p class="subtitle">Une reponse sera choisie au hasard pour chaque commentaire</p>
+  <div id="replies" class="card" style="margin-bottom:16px;"></div>
+  <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
+</div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get('token');
 let keywords = {};
 let replies = [];
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector('.tab[onclick*="' + tab + '"]').classList.add('active');
+}
 
 async function load() {
   const r = await fetch('/api/config?token=' + TOKEN);
