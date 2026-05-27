@@ -10,15 +10,28 @@ app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("insta-dm")
 
-CONFIG_PATH = "config.json"
+DATA_DIR = "/data"
+PERSISTENT_CONFIG = os.path.join(DATA_DIR, "config.json")
+DEFAULT_CONFIG = "config.json"
+
 
 def load_config():
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    if os.path.exists(PERSISTENT_CONFIG):
+        with open(PERSISTENT_CONFIG) as f:
+            return json.load(f)
+    with open(DEFAULT_CONFIG) as f:
+        config = json.load(f)
+    save_config(config)
+    return config
+
 
 def save_config(config):
-    with open(CONFIG_PATH, "w") as f:
+    if os.path.isdir(DATA_DIR):
+        with open(PERSISTENT_CONFIG, "w") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    with open(DEFAULT_CONFIG, "w") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+
 
 CONFIG = load_config()
 
