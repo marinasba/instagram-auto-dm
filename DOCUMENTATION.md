@@ -147,12 +147,40 @@ Partager ce lien : `https://web-production-e6a42.up.railway.app/admin?token=gari
 
 ---
 
+## Couts et limitations
+
+### Railway (hebergement)
+- **Essai gratuit** : $5 de credits offerts au depart
+- **Apres l'essai** : plan Hobby a **$5/mois** + usage (pour notre app le usage est quasi nul, donc ~$5/mois max)
+- **Pas de limite** de nombre de requetes ou de contacts
+- **Comparaison** : Manychat = $14-29/mois avec limites de contacts. Railway = ~$5/mois sans limites
+
+### Instagram API (Meta)
+- **100% gratuit** : aucun cout par message, par commentaire ou par contact
+- **Pas de limite** de messages envoyes
+- **Seule contrainte** : le token d'acces expire periodiquement, il faut le renouveler (voir section dediee)
+
+### GitHub
+- **Gratuit** pour les repos publics (notre cas)
+- Si on veut passer en repo prive : gratuit aussi (GitHub Free inclut les repos prives)
+
+### Resume des couts
+
+| Service | Cout | Limites |
+|---------|------|---------|
+| Railway | ~$5/mois | Aucune limite de contacts |
+| Instagram API | Gratuit | Aucune |
+| GitHub | Gratuit | Aucune |
+| **Total** | **~$5/mois** | **vs Manychat $14-29/mois** |
+
+---
+
 ## Stack technique
 
 - **Langage** : Python 3
 - **Framework** : FastAPI
 - **Serveur** : Uvicorn
 - **HTTP client** : httpx (appels vers l'API Instagram)
-- **Hebergement** : Railway (free tier)
+- **Hebergement** : Railway (~$5/mois)
 - **API** : Instagram Graph API v21.0
 - **Repo** : GitHub
