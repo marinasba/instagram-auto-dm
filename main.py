@@ -77,8 +77,10 @@ ADMIN_HTML = """<!DOCTYPE html>
   .btn { border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
   .btn-delete { background: #f5e6e6; color: #c0392b; }
   .btn-delete:hover { background: #e8d0d0; }
-  .btn-save { background: #4a7c59; color: white; width: 100%; padding: 12px; font-size: 1em; }
-  .btn-save:hover { background: #3d6b4a; }
+  .btn-save { background: #2563eb; color: white; width: 100%; padding: 12px; font-size: 1em; transition: background 0.3s; }
+  .btn-save:hover { background: #1d4ed8; }
+  .btn-save.saved { background: #16a34a; }
+  .btn-save.saved:hover { background: #16a34a; }
   .btn-add { background: white; color: #4a7c59; border: 2px dashed #4a7c59; width: 100%; padding: 14px; font-size: 1em; margin-bottom: 16px; border-radius: 12px; }
   .btn-add:hover { background: #f0f7f2; }
   textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-family: inherit; font-size: 0.9em; resize: vertical; min-height: 100px; }
@@ -167,14 +169,15 @@ function remove(k) {
 }
 
 async function saveAll() {
+  const btn = document.querySelector('.btn-save');
   await fetch('/api/config?token=' + TOKEN, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({keywords, replies: replies.filter(r => r.trim())})
   });
-  const t = document.getElementById('toast');
-  t.style.display = 'block';
-  setTimeout(() => t.style.display = 'none', 2000);
+  btn.textContent = 'Enregistre !';
+  btn.classList.add('saved');
+  setTimeout(() => { btn.textContent = 'Enregistrer'; btn.classList.remove('saved'); }, 2500);
 }
 
 load();
