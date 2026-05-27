@@ -38,7 +38,7 @@ Serveur Python (heberge sur Railway)
 ### 2. Hebergement - Railway
 
 - **URL du serveur** : https://web-production-e6a42.up.railway.app
-- **Compte Railway** : connecte via GitHub (marinasba)
+- **Compte Railway** : contact@gariguettes.fr (repo GitHub marinasba connecte)
 - **Dashboard** : https://railway.app (se connecter avec GitHub)
 - **Variables d'environnement** (dans Railway > projet > service > Variables) :
   - `VERIFY_TOKEN` = token de verification du webhook Meta (valeur : `gariguettes_secret_2026`)
