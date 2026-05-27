@@ -94,6 +94,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 <p class="subtitle">gariguettes_fr</p>
 
 <button class="btn btn-add" onclick="addNew()">+ Ajouter un mot-clé</button>
+<button class="btn btn-save" onclick="saveAll()" style="margin-bottom:16px;">Enregistrer</button>
 
 <div id="keywords"></div>
 
@@ -151,9 +152,12 @@ function addNew() {
   if (!kw) return;
   const key = kw.toUpperCase().trim();
   if (keywords[key]) { alert('Ce mot-clé existe déjà !'); return; }
-  keywords[key] = '';
+  const updated = {};
+  updated[key] = '';
+  Object.keys(keywords).forEach(k => updated[k] = keywords[k]);
+  keywords = updated;
   render();
-  document.querySelector('.card:last-child textarea').focus();
+  document.querySelector('.card:first-child textarea').focus();
 }
 
 function addReply() {
@@ -169,15 +173,14 @@ function remove(k) {
 }
 
 async function saveAll() {
-  const btn = document.querySelector('.btn-save');
+  const btns = document.querySelectorAll('.btn-save');
   await fetch('/api/config?token=' + TOKEN, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({keywords, replies: replies.filter(r => r.trim())})
   });
-  btn.textContent = 'Enregistre !';
-  btn.classList.add('saved');
-  setTimeout(() => { btn.textContent = 'Enregistrer'; btn.classList.remove('saved'); }, 2500);
+  btns.forEach(btn => { btn.textContent = 'Enregistre !'; btn.classList.add('saved'); });
+  setTimeout(() => btns.forEach(btn => { btn.textContent = 'Enregistrer'; btn.classList.remove('saved'); }), 2500);
 }
 
 load();
