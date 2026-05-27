@@ -28,11 +28,22 @@ ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", VERIFY_TOKEN)
 GRAPH_API = "https://graph.instagram.com/v21.0"
 
 sent_comments: set[str] = set()
+recent_events: list[dict] = []
 
 
 def check_admin(token: str = Query(default="")):
     if token != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="Token invalide")
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "app": "instagram-auto-dm"}
+
+
+@app.get("/logs")
+async def get_logs(_=Depends(check_admin)):
+    return recent_events[-50:]
 
 
 # ─── Admin interface ───
@@ -170,6 +181,10 @@ async def verify_webhook(
 @app.post("/webhook")
 async def handle_webhook(request: Request):
     body = await request.json()
+    recent_events.append(body)
+    if len(recent_events) > 50:
+        recent_events.pop(0)
+    logger.info(f"Webhook recu: {json.dumps(body, ensure_ascii=False)[:500]}")
 
     for entry in body.get("entry", []):
         for change in entry.get("changes", []):
