@@ -41,6 +41,18 @@ async def root():
     return {"status": "ok", "app": "instagram-auto-dm"}
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy():
+    return """<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Politique de confidentialité</title>
+<style>body{font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px;color:#333;}</style></head><body>
+<h1>Politique de confidentialité</h1>
+<p>Cette application envoie des messages directs automatisés sur Instagram en réponse aux commentaires contenant des mots-clés spécifiques.</p>
+<p><strong>Données collectées :</strong> Aucune donnée personnelle n'est stockée. Seul l'identifiant du commentaire est temporairement conservé en mémoire pour éviter les doublons.</p>
+<p><strong>Utilisation :</strong> Les données sont utilisées uniquement pour envoyer le message automatique correspondant.</p>
+<p><strong>Contact :</strong> contact@gariguettes.fr</p>
+</body></html>"""
+
+
 @app.get("/logs")
 async def get_logs(_=Depends(check_admin)):
     return recent_events[-50:]
