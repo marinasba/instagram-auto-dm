@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from fastapi.responses import PlainTextResponse, HTMLResponse, RedirectResponse, JSONResponse
 import database as db
 from auth import hash_password, verify_password, create_token, get_current_user, TOKEN_EXPIRE_DAYS
+import instagram_oauth
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -259,6 +260,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
 </div>
 
+<div class="card" id="ig-card">
+  <h2 style="margin-bottom:8px;">Instagram</h2>
+  <p id="ig-status"></p>
+</div>
+
 <script>
 let keywords = {};
 let replies = [];
@@ -271,6 +277,12 @@ async function loadUser() {
     ? '<span class="badge badge-ok">Actif</span>'
     : '<span class="badge badge-ko">Inactif</span>';
   document.getElementById('user-info').innerHTML = d.email + ' \u2014 ' + badge;
+  const ig = document.getElementById('ig-status');
+  if (d.instagram_connected) {
+    ig.innerHTML = '<span class="badge badge-ok">Connect\u00e9</span> @' + d.instagram_username + ' \u2014 <a href="/instagram/disconnect" style="color:#c0392b;">D\u00e9connecter</a>';
+  } else {
+    ig.innerHTML = '<a href="/instagram/connect" style="background:#4a7c59;color:white;display:inline-block;padding:10px 20px;text-decoration:none;border-radius:8px;font-weight:600;">Connecter Instagram</a>';
+  }
 }
 
 function switchTab(tab) {
@@ -424,10 +436,13 @@ async def api_me(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Non connect\u00e9")
     sub = db.get_active_subscription(user["user_id"])
+    ig = db.get_instagram_account(user["user_id"])
     return {
         "email": user["email"],
         "has_subscription": sub is not None,
         "expires_at": dict(sub)["expires_at"] if sub else None,
+        "instagram_connected": ig is not None,
+        "instagram_username": ig["username"] if ig else None,
     }
 
 
@@ -452,6 +467,56 @@ async def update_dashboard_config(request: Request):
     db.update_keywords(user["user_id"], data.get("keywords", {}))
     db.update_replies(user["user_id"], data.get("replies", []))
     return {"status": "ok"}
+
+
+# ─── Instagram OAuth ───
+
+@app.get("/instagram/connect")
+async def instagram_connect(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    url = instagram_oauth.get_authorize_url(state=str(user["user_id"]))
+    return RedirectResponse(url)
+
+
+@app.get("/instagram/callback")
+async def instagram_callback(request: Request, code: str = "", state: str = ""):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    token_data = await instagram_oauth.exchange_code(code)
+    if "error" in token_data:
+        logger.error(f"OAuth error: {token_data['error']}")
+        return HTMLResponse("<h1>Erreur</h1><p>Impossible de connecter Instagram. <a href='/dashboard'>Retour</a></p>", status_code=400)
+
+    short_token = token_data.get("access_token", "")
+    long_data = await instagram_oauth.get_long_lived_token(short_token)
+    access_token = long_data.get("access_token", short_token)
+    expires_in = long_data.get("expires_in", 0)
+
+    profile = await instagram_oauth.get_profile(access_token)
+    ig_id = str(profile.get("id", token_data.get("user_id", "")))
+    username = profile.get("username", "")
+
+    expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat() if expires_in else None
+
+    db.delete_instagram_account(user["user_id"])
+    db.create_instagram_account(user["user_id"], ig_id, username, access_token)
+    logger.info(f"Instagram connecte: @{username} pour user {user['user_id']}")
+
+    return RedirectResponse("/dashboard")
+
+
+@app.get("/instagram/disconnect")
+async def instagram_disconnect(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    db.delete_instagram_account(user["user_id"])
+    logger.info(f"Instagram deconnecte pour user {user['user_id']}")
+    return RedirectResponse("/dashboard")
 
 
 @app.get("/logs")

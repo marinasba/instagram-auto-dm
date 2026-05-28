@@ -119,6 +119,13 @@ def get_instagram_account(user_id: int):
     return row
 
 
+def delete_instagram_account(user_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM instagram_accounts WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
 def get_instagram_account_by_ig_id(instagram_id: str):
     conn = get_db()
     row = conn.execute(
