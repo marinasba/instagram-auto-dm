@@ -4,7 +4,10 @@ import logging
 import random
 import httpx
 from fastapi import FastAPI, Request, Query, Depends, HTTPException
-from fastapi.responses import PlainTextResponse, HTMLResponse
+from datetime import datetime, timedelta
+from fastapi.responses import PlainTextResponse, HTMLResponse, RedirectResponse, JSONResponse
+import database as db
+from auth import hash_password, verify_password, create_token, get_current_user, TOKEN_EXPIRE_DAYS
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +59,27 @@ sent_comments: set[str] = set()
 recent_events: list[dict] = []
 
 
+@app.on_event("startup")
+def startup():
+    db.init_db()
+    migrate_gariguettes()
+
+
+def migrate_gariguettes():
+    if db.get_user_by_email("contact@gariguettes.fr"):
+        logger.info("Gariguettes deja migree")
+        return
+    pw = os.environ.get("GARIGUETTES_PASSWORD", ADMIN_TOKEN)
+    user_id = db.create_user("contact@gariguettes.fr", hash_password(pw))
+    for kw, msg in CONFIG["keywords"].items():
+        db.create_keyword(user_id, kw, msg)
+    for txt in CONFIG.get("replies", []):
+        db.create_reply(user_id, txt)
+    expires = (datetime.utcnow() + timedelta(days=365)).isoformat()
+    db.create_subscription(user_id, expires)
+    logger.info(f"Migration Gariguettes OK (user_id={user_id})")
+
+
 def check_admin(token: str = Query(default="")):
     if token != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="Token invalide")
@@ -76,6 +100,224 @@ async def privacy():
 <p><strong>Utilisation :</strong> Les données sont utilisées uniquement pour envoyer le message automatique correspondant.</p>
 <p><strong>Contact :</strong> contact@gariguettes.fr</p>
 </body></html>"""
+
+
+# ─── Auth pages ───
+
+AUTH_STYLE = """
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f0eb; color: #2d2d2d; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+  .container { background: white; border-radius: 16px; padding: 40px; width: 100%; max-width: 400px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
+  h1 { font-size: 1.5em; color: #4a7c59; margin-bottom: 8px; }
+  .subtitle { color: #888; font-size: 0.9em; margin-bottom: 24px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 0.9em; }
+  input { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 1em; margin-bottom: 16px; font-family: inherit; }
+  input:focus { outline: none; border-color: #4a7c59; }
+  .btn { width: 100%; border: none; border-radius: 8px; padding: 14px; font-size: 1em; font-weight: 600; cursor: pointer; background: #4a7c59; color: white; transition: background 0.3s; }
+  .btn:hover { background: #3d6a4c; }
+  .error { background: #fef2f2; color: #c0392b; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9em; display: none; }
+  .link { text-align: center; margin-top: 20px; font-size: 0.9em; }
+  .link a { color: #4a7c59; text-decoration: none; font-weight: 600; }
+"""
+
+LOGIN_HTML = f"""<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connexion - Messages Auto</title>
+<style>{AUTH_STYLE}</style></head>
+<body>
+<div class="container">
+  <h1>Connexion</h1>
+  <p class="subtitle">Messages Auto Instagram</p>
+  <div class="error" id="error"></div>
+  <form onsubmit="login(event)">
+    <label>Email</label>
+    <input type="email" id="email" required placeholder="ton@email.com">
+    <label>Mot de passe</label>
+    <input type="password" id="password" required placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022">
+    <button type="submit" class="btn">Se connecter</button>
+  </form>
+  <div class="link">Pas encore de compte ? <a href="/signup">Cr\u00e9er un compte</a></div>
+</div>
+<script>
+async function login(e) {{
+  e.preventDefault();
+  const r = await fetch('/api/login', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{email: document.getElementById('email').value, password: document.getElementById('password').value}})
+  }});
+  if (r.ok) {{ window.location.href = '/dashboard'; }}
+  else {{ const d = await r.json(); const err = document.getElementById('error'); err.textContent = d.detail || 'Erreur'; err.style.display = 'block'; }}
+}}
+</script>
+</body></html>"""
+
+SIGNUP_HTML = f"""<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inscription - Messages Auto</title>
+<style>{AUTH_STYLE}</style></head>
+<body>
+<div class="container">
+  <h1>Cr\u00e9er un compte</h1>
+  <p class="subtitle">Messages Auto Instagram</p>
+  <div class="error" id="error"></div>
+  <form onsubmit="signup(event)">
+    <label>Email</label>
+    <input type="email" id="email" required placeholder="ton@email.com">
+    <label>Mot de passe</label>
+    <input type="password" id="password" required minlength="6" placeholder="6 caract\u00e8res minimum">
+    <label>Confirmer le mot de passe</label>
+    <input type="password" id="password2" required placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022">
+    <button type="submit" class="btn">Cr\u00e9er mon compte</button>
+  </form>
+  <div class="link">D\u00e9j\u00e0 un compte ? <a href="/login">Se connecter</a></div>
+</div>
+<script>
+async function signup(e) {{
+  e.preventDefault();
+  const pw = document.getElementById('password').value;
+  const pw2 = document.getElementById('password2').value;
+  const err = document.getElementById('error');
+  if (pw !== pw2) {{ err.textContent = 'Les mots de passe ne correspondent pas'; err.style.display = 'block'; return; }}
+  const r = await fetch('/api/signup', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{email: document.getElementById('email').value, password: pw}})
+  }});
+  if (r.ok) {{ window.location.href = '/dashboard'; }}
+  else {{ const d = await r.json(); err.textContent = d.detail || 'Erreur'; err.style.display = 'block'; }}
+}}
+</script>
+</body></html>"""
+
+DASHBOARD_HTML = f"""<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tableau de bord - Messages Auto</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f0eb; color: #2d2d2d; padding: 20px; max-width: 700px; margin: 0 auto; }}
+  h1 {{ font-size: 1.5em; color: #4a7c59; }}
+  .subtitle {{ color: #888; font-size: 0.9em; }}
+  .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
+  .card {{ background: white; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
+  .badge {{ display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 600; }}
+  .badge-ok {{ background: #dcfce7; color: #16a34a; }}
+  .badge-ko {{ background: #fef2f2; color: #c0392b; }}
+  .btn {{ border: none; border-radius: 8px; padding: 10px 20px; cursor: pointer; font-size: 0.9em; font-weight: 600; text-decoration: none; }}
+  .btn-logout {{ background: #f5e6e6; color: #c0392b; }}
+  .btn-logout:hover {{ background: #e8d0d0; }}
+  ul {{ margin-top: 12px; padding-left: 20px; line-height: 1.8; }}
+</style></head>
+<body>
+<div class="header">
+  <div><h1>Tableau de bord</h1><p class="subtitle" id="email"></p></div>
+  <a href="/logout" class="btn btn-logout">D\u00e9connexion</a>
+</div>
+<div class="card">
+  <h2 style="margin-bottom:8px;">Abonnement</h2>
+  <p id="sub-status"></p>
+</div>
+<div class="card">
+  <h2 style="margin-bottom:8px;">Prochaines \u00e9tapes</h2>
+  <p>Ton espace de gestion arrive bient\u00f4t :</p>
+  <ul>
+    <li>G\u00e9rer tes mots-cl\u00e9s et r\u00e9ponses automatiques</li>
+    <li>Connecter ton compte Instagram</li>
+    <li>Voir les statistiques de tes DM</li>
+  </ul>
+</div>
+<script>
+async function load() {{
+  const r = await fetch('/api/me');
+  if (!r.ok) {{ window.location.href = '/login'; return; }}
+  const d = await r.json();
+  document.getElementById('email').textContent = d.email;
+  const sub = document.getElementById('sub-status');
+  if (d.has_subscription) {{
+    sub.innerHTML = '<span class="badge badge-ok">Actif</span> jusqu\\'au ' + new Date(d.expires_at).toLocaleDateString('fr-FR');
+  }} else {{
+    sub.innerHTML = '<span class="badge badge-ko">Inactif</span> — Abonne-toi pour activer les messages automatiques.';
+  }}
+}}
+load();
+</script>
+</body></html>"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if get_current_user(request):
+        return RedirectResponse("/dashboard")
+    return LOGIN_HTML
+
+
+@app.get("/signup", response_class=HTMLResponse)
+async def signup_page(request: Request):
+    if get_current_user(request):
+        return RedirectResponse("/dashboard")
+    return SIGNUP_HTML
+
+
+@app.post("/api/signup")
+async def api_signup(request: Request):
+    data = await request.json()
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email et mot de passe requis")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Le mot de passe doit faire au moins 6 caract\u00e8res")
+    if db.get_user_by_email(email):
+        raise HTTPException(status_code=400, detail="Un compte existe d\u00e9j\u00e0 avec cet email")
+    user_id = db.create_user(email, hash_password(password))
+    token = create_token(user_id, email)
+    response = JSONResponse({"status": "ok"})
+    response.set_cookie("session", token, httponly=True, max_age=TOKEN_EXPIRE_DAYS * 86400, samesite="lax")
+    return response
+
+
+@app.post("/api/login")
+async def api_login(request: Request):
+    data = await request.json()
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+    user = db.get_user_by_email(email)
+    if not user or not verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+    token = create_token(user["id"], email)
+    response = JSONResponse({"status": "ok"})
+    response.set_cookie("session", token, httponly=True, max_age=TOKEN_EXPIRE_DAYS * 86400, samesite="lax")
+    return response
+
+
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse("/login")
+    response.delete_cookie("session")
+    return response
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    if not get_current_user(request):
+        return RedirectResponse("/login")
+    return DASHBOARD_HTML
+
+
+@app.get("/api/me")
+async def api_me(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Non connect\u00e9")
+    sub = db.get_active_subscription(user["user_id"])
+    return {
+        "email": user["email"],
+        "has_subscription": sub is not None,
+        "expires_at": dict(sub)["expires_at"] if sub else None,
+    }
 
 
 @app.get("/logs")
