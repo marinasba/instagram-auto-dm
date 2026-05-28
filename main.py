@@ -66,8 +66,11 @@ def startup():
 
 
 def migrate_gariguettes():
-    if db.get_user_by_email("contact@gariguettes.fr"):
-        logger.info("Gariguettes deja migree")
+    user = db.get_user_by_email("contact@gariguettes.fr")
+    if user:
+        if not db.get_instagram_account(user["id"]):
+            db.create_instagram_account(user["id"], "17841447700219621", "gariguettes_fr", ACCESS_TOKEN)
+            logger.info("Instagram account added for Gariguettes")
         return
     pw = os.environ.get("GARIGUETTES_PASSWORD", ADMIN_TOKEN)
     user_id = db.create_user("contact@gariguettes.fr", hash_password(pw))
@@ -77,6 +80,7 @@ def migrate_gariguettes():
         db.create_reply(user_id, txt)
     expires = (datetime.utcnow() + timedelta(days=365)).isoformat()
     db.create_subscription(user_id, expires)
+    db.create_instagram_account(user_id, "17841447700219621", "gariguettes_fr", ACCESS_TOKEN)
     logger.info(f"Migration Gariguettes OK (user_id={user_id})")
 
 
@@ -192,56 +196,163 @@ async function signup(e) {{
 </script>
 </body></html>"""
 
-DASHBOARD_HTML = f"""<!DOCTYPE html>
+DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tableau de bord - Messages Auto</title>
 <style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f0eb; color: #2d2d2d; padding: 20px; max-width: 700px; margin: 0 auto; }}
-  h1 {{ font-size: 1.5em; color: #4a7c59; }}
-  .subtitle {{ color: #888; font-size: 0.9em; }}
-  .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
-  .card {{ background: white; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
-  .badge {{ display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 600; }}
-  .badge-ok {{ background: #dcfce7; color: #16a34a; }}
-  .badge-ko {{ background: #fef2f2; color: #c0392b; }}
-  .btn {{ border: none; border-radius: 8px; padding: 10px 20px; cursor: pointer; font-size: 0.9em; font-weight: 600; text-decoration: none; }}
-  .btn-logout {{ background: #f5e6e6; color: #c0392b; }}
-  .btn-logout:hover {{ background: #e8d0d0; }}
-  ul {{ margin-top: 12px; padding-left: 20px; line-height: 1.8; }}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f0eb; color: #2d2d2d; padding: 20px; max-width: 700px; margin: 0 auto; }
+  h1 { font-size: 1.5em; color: #4a7c59; }
+  .subtitle { color: #888; font-size: 0.9em; margin-bottom: 24px; }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .keyword { font-weight: 700; font-size: 1.1em; color: #4a7c59; text-transform: uppercase; }
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 600; }
+  .badge-ok { background: #dcfce7; color: #16a34a; }
+  .badge-ko { background: #fef2f2; color: #c0392b; }
+  .btn { border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+  .btn-delete { background: #f5e6e6; color: #c0392b; }
+  .btn-delete:hover { background: #e8d0d0; }
+  .btn-save { background: #2563eb; color: white; width: 100%; padding: 12px; font-size: 1em; transition: background 0.3s; }
+  .btn-save:hover { background: #1d4ed8; }
+  .btn-save.saved { background: #16a34a; }
+  .btn-add { background: white; color: #4a7c59; border: 2px dashed #4a7c59; width: 100%; padding: 14px; font-size: 1em; margin-bottom: 16px; border-radius: 12px; }
+  .btn-add:hover { background: #f0f7f2; }
+  .btn-logout { background: #f5e6e6; color: #c0392b; text-decoration: none; padding: 10px 20px; border-radius: 8px; }
+  .btn-logout:hover { background: #e8d0d0; }
+  textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-family: inherit; font-size: 0.9em; resize: vertical; min-height: 100px; }
+  input[type=text] { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; font-family: inherit; font-size: 1em; margin-bottom: 12px; }
+  .tabs { display: flex; gap: 0; margin-bottom: 20px; }
+  .tab { flex: 1; padding: 12px; text-align: center; font-weight: 600; font-size: 1em; cursor: pointer; border: none; background: white; color: #888; border-bottom: 3px solid #ddd; transition: all 0.2s; }
+  .tab.active { color: #4a7c59; border-bottom-color: #4a7c59; }
+  .tab:first-child { border-radius: 8px 0 0 0; }
+  .tab:last-child { border-radius: 0 8px 0 0; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .empty { text-align: center; color: #999; padding: 40px; }
 </style></head>
 <body>
 <div class="header">
-  <div><h1>Tableau de bord</h1><p class="subtitle" id="email"></p></div>
+  <div><h1>Messages Auto</h1><p class="subtitle" id="user-info"></p></div>
   <a href="/logout" class="btn btn-logout">D\u00e9connexion</a>
 </div>
-<div class="card">
-  <h2 style="margin-bottom:8px;">Abonnement</h2>
-  <p id="sub-status"></p>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('keywords')">Mots-cl\u00e9s</button>
+  <button class="tab" onclick="switchTab('replies')">R\u00e9ponses aux commentaires</button>
 </div>
-<div class="card">
-  <h2 style="margin-bottom:8px;">Prochaines \u00e9tapes</h2>
-  <p>Ton espace de gestion arrive bient\u00f4t :</p>
-  <ul>
-    <li>G\u00e9rer tes mots-cl\u00e9s et r\u00e9ponses automatiques</li>
-    <li>Connecter ton compte Instagram</li>
-    <li>Voir les statistiques de tes DM</li>
-  </ul>
+
+<button class="btn btn-save" onclick="saveAll()" style="margin-bottom:16px;">Enregistrer</button>
+
+<div id="tab-keywords" class="tab-content active">
+  <button class="btn btn-add" onclick="addNew()">+ Ajouter un mot-cl\u00e9</button>
+  <div id="keywords"></div>
+  <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
 </div>
+
+<div id="tab-replies" class="tab-content">
+  <button class="btn btn-add" onclick="addReply()">+ Ajouter une r\u00e9ponse</button>
+  <p class="subtitle">Une r\u00e9ponse sera choisie au hasard pour chaque commentaire</p>
+  <div id="replies" class="card" style="margin-bottom:16px;"></div>
+  <button class="btn btn-save" onclick="saveAll()">Enregistrer</button>
+</div>
+
 <script>
-async function load() {{
+let keywords = {};
+let replies = [];
+
+async function loadUser() {
   const r = await fetch('/api/me');
-  if (!r.ok) {{ window.location.href = '/login'; return; }}
+  if (!r.ok) { window.location.href = '/login'; return; }
   const d = await r.json();
-  document.getElementById('email').textContent = d.email;
-  const sub = document.getElementById('sub-status');
-  if (d.has_subscription) {{
-    sub.innerHTML = '<span class="badge badge-ok">Actif</span> jusqu\\'au ' + new Date(d.expires_at).toLocaleDateString('fr-FR');
-  }} else {{
-    sub.innerHTML = '<span class="badge badge-ko">Inactif</span> — Abonne-toi pour activer les messages automatiques.';
-  }}
-}}
+  const badge = d.has_subscription
+    ? '<span class="badge badge-ok">Actif</span>'
+    : '<span class="badge badge-ko">Inactif</span>';
+  document.getElementById('user-info').innerHTML = d.email + ' \u2014 ' + badge;
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector('.tab[onclick*="' + tab + '"]').classList.add('active');
+}
+
+async function load() {
+  await loadUser();
+  const r = await fetch('/api/dashboard/config');
+  if (!r.ok) return;
+  const data = await r.json();
+  keywords = data.keywords;
+  replies = data.replies;
+  render();
+  renderReplies();
+}
+
+function render() {
+  const el = document.getElementById('keywords');
+  const keys = Object.keys(keywords);
+  if (!keys.length) { el.innerHTML = '<div class="empty">Aucun mot-cl\u00e9 configur\u00e9</div>'; return; }
+  el.innerHTML = keys.map(k => `
+    <div class="card">
+      <div class="card-header">
+        <span class="keyword">${k}</span>
+        <button class="btn btn-delete" onclick="remove('${k}')">Supprimer</button>
+      </div>
+      <textarea onchange="keywords['${k}']=this.value">${keywords[k]}</textarea>
+    </div>
+  `).join('');
+}
+
+function renderReplies() {
+  const el = document.getElementById('replies');
+  if (!replies.length) { el.innerHTML = '<div class="empty">Aucune r\u00e9ponse configur\u00e9e</div>'; return; }
+  el.innerHTML = replies.map((r, i) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <input type="text" value="${r}" onchange="replies[${i}]=this.value" style="margin:0;flex:1;">
+      <button class="btn btn-delete" onclick="replies.splice(${i},1);renderReplies();">X</button>
+    </div>
+  `).join('');
+}
+
+function addNew() {
+  const kw = prompt('Nouveau mot-cl\u00e9 (ex: CHARIOT, GUIDE, TISANE) :');
+  if (!kw) return;
+  const key = kw.toUpperCase().trim();
+  if (keywords[key]) { alert('Ce mot-cl\u00e9 existe d\u00e9j\u00e0 !'); return; }
+  const updated = {};
+  updated[key] = '';
+  Object.keys(keywords).forEach(k => updated[k] = keywords[k]);
+  keywords = updated;
+  render();
+  document.querySelector('.card:first-child textarea').focus();
+}
+
+function addReply() {
+  replies.push('');
+  renderReplies();
+  document.querySelector('#replies input:last-of-type').focus();
+}
+
+function remove(k) {
+  if (!confirm('Supprimer le mot-cl\u00e9 ' + k + ' ?')) return;
+  delete keywords[k];
+  render();
+}
+
+async function saveAll() {
+  const btns = document.querySelectorAll('.btn-save');
+  await fetch('/api/dashboard/config', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({keywords, replies: replies.filter(r => r.trim())})
+  });
+  btns.forEach(btn => { btn.textContent = 'Enregistr\u00e9 !'; btn.classList.add('saved'); });
+  setTimeout(() => btns.forEach(btn => { btn.textContent = 'Enregistrer'; btn.classList.remove('saved'); }), 2500);
+}
+
 load();
 </script>
 </body></html>"""
@@ -318,6 +429,29 @@ async def api_me(request: Request):
         "has_subscription": sub is not None,
         "expires_at": dict(sub)["expires_at"] if sub else None,
     }
+
+
+@app.get("/api/dashboard/config")
+async def get_dashboard_config(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Non connect\u00e9")
+    keywords_rows = db.get_keywords(user["user_id"])
+    replies_rows = db.get_replies(user["user_id"])
+    keywords = {row["keyword"]: row["message"] for row in keywords_rows}
+    replies = [row["text"] for row in replies_rows]
+    return {"keywords": keywords, "replies": replies}
+
+
+@app.put("/api/dashboard/config")
+async def update_dashboard_config(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Non connect\u00e9")
+    data = await request.json()
+    db.update_keywords(user["user_id"], data.get("keywords", {}))
+    db.update_replies(user["user_id"], data.get("replies", []))
+    return {"status": "ok"}
 
 
 @app.get("/logs")
@@ -532,6 +666,9 @@ async def handle_webhook(request: Request):
     logger.info(f"Webhook recu: {json.dumps(body, ensure_ascii=False)[:500]}")
 
     for entry in body.get("entry", []):
+        ig_id = entry.get("id")
+        ig_account = db.get_instagram_account_by_ig_id(ig_id) if ig_id else None
+
         for change in entry.get("changes", []):
             if change.get("field") != "comments":
                 continue
@@ -544,20 +681,31 @@ async def handle_webhook(request: Request):
             if not comment_id or comment_id in sent_comments:
                 continue
 
-            for keyword, message in CONFIG["keywords"].items():
-                if keyword.upper() in comment_text:
-                    await send_dm(comment_id, message, username, keyword)
-                    await reply_to_comment(comment_id, username)
-                    break
+            if ig_account:
+                user_id = ig_account["user_id"]
+                token = ig_account["access_token"]
+                kw_rows = db.get_keywords(user_id)
+                reply_texts = [r["text"] for r in db.get_replies(user_id)]
+                for kw in kw_rows:
+                    if kw["keyword"].upper() in comment_text:
+                        await send_dm(comment_id, kw["message"], username, kw["keyword"], token)
+                        await reply_to_comment(comment_id, username, reply_texts, token)
+                        break
+            else:
+                for keyword, message in CONFIG["keywords"].items():
+                    if keyword.upper() in comment_text:
+                        await send_dm(comment_id, message, username, keyword, ACCESS_TOKEN)
+                        await reply_to_comment(comment_id, username, CONFIG.get("replies", []), ACCESS_TOKEN)
+                        break
 
     return {"status": "ok"}
 
 
-async def send_dm(comment_id: str, message: str, username: str, keyword: str):
+async def send_dm(comment_id: str, message: str, username: str, keyword: str, access_token: str):
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{GRAPH_API}/me/messages",
-            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+            headers={"Authorization": f"Bearer {access_token}"},
             json={
                 "recipient": {"comment_id": comment_id},
                 "message": {"text": message},
@@ -571,15 +719,14 @@ async def send_dm(comment_id: str, message: str, username: str, keyword: str):
         logger.error(f"Erreur DM @{username}: {resp.status_code} - {resp.text}")
 
 
-async def reply_to_comment(comment_id: str, username: str):
-    replies = CONFIG.get("replies", [])
+async def reply_to_comment(comment_id: str, username: str, replies: list, access_token: str):
     if not replies:
         return
     reply_text = random.choice(replies)
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{GRAPH_API}/{comment_id}/replies",
-            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+            headers={"Authorization": f"Bearer {access_token}"},
             json={"message": reply_text},
         )
     if resp.status_code == 200:

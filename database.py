@@ -85,6 +85,49 @@ def get_user_by_id(user_id: int):
     return row
 
 
+def get_user_by_instagram_id(instagram_id: str):
+    conn = get_db()
+    row = conn.execute("""
+        SELECT u.* FROM users u
+        JOIN instagram_accounts ia ON ia.user_id = u.id
+        WHERE ia.instagram_id = ?
+    """, (instagram_id,)).fetchone()
+    conn.close()
+    return row
+
+
+# --- Instagram Accounts ---
+
+def create_instagram_account(user_id: int, instagram_id: str, username: str, access_token: str) -> int:
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO instagram_accounts (user_id, instagram_id, username, access_token) VALUES (?, ?, ?, ?)",
+        (user_id, instagram_id, username, access_token),
+    )
+    conn.commit()
+    account_id = cur.lastrowid
+    conn.close()
+    return account_id
+
+
+def get_instagram_account(user_id: int):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM instagram_accounts WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_instagram_account_by_ig_id(instagram_id: str):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM instagram_accounts WHERE instagram_id = ?", (instagram_id,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
 # --- Keywords ---
 
 def get_keywords(user_id: int) -> list:
@@ -153,3 +196,29 @@ def get_active_subscription(user_id: int):
     ).fetchone()
     conn.close()
     return row
+
+
+# --- Bulk updates ---
+
+def update_keywords(user_id: int, keywords: dict):
+    conn = get_db()
+    conn.execute("DELETE FROM keywords WHERE user_id = ?", (user_id,))
+    for kw, msg in keywords.items():
+        conn.execute(
+            "INSERT INTO keywords (user_id, keyword, message) VALUES (?, ?, ?)",
+            (user_id, kw, msg),
+        )
+    conn.commit()
+    conn.close()
+
+
+def update_replies(user_id: int, replies: list):
+    conn = get_db()
+    conn.execute("DELETE FROM replies WHERE user_id = ?", (user_id,))
+    for text in replies:
+        conn.execute(
+            "INSERT INTO replies (user_id, text) VALUES (?, ?)",
+            (user_id, text),
+        )
+    conn.commit()
+    conn.close()
