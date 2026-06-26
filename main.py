@@ -582,6 +582,43 @@ async def get_logs(_=Depends(check_admin)):
     return recent_events[-50:]
 
 
+@app.get("/debug/resolve")
+async def debug_resolve(url: str = "", _=Depends(check_admin)):
+    user = db.get_user_by_email("contact@gariguettes.fr")
+    ig = db.get_instagram_account(user["id"]) if user else None
+    if not ig:
+        return {"error": "no instagram account"}
+    shortcode = instagram_oauth.parse_shortcode(url)
+    debug: dict = {"input_url": url, "parsed_shortcode": shortcode, "ig_user_id": ig["instagram_id"], "pages": []}
+    if not shortcode:
+        return debug
+    api_url = f"{instagram_oauth.GRAPH_URL}/v21.0/{ig['instagram_id']}/media"
+    params: dict = {"fields": "id,permalink", "access_token": ig["access_token"], "limit": 100}
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        for page in range(5):
+            resp = await client.get(api_url, params=params)
+            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"raw": resp.text}
+            permalinks = [m.get("permalink", "") for m in body.get("data", [])]
+            match = next((m for m in body.get("data", []) if f"/{shortcode}/" in m.get("permalink", "") or m.get("permalink", "").endswith(f"/{shortcode}")), None)
+            debug["pages"].append({
+                "page": page,
+                "status": resp.status_code,
+                "count": len(body.get("data", [])),
+                "error": body.get("error"),
+                "sample_permalinks": permalinks[:3],
+                "match": match,
+            })
+            if match:
+                debug["resolved_media_id"] = match.get("id")
+                return debug
+            next_url = body.get("paging", {}).get("next")
+            if not next_url:
+                break
+            api_url = next_url
+            params = {}
+    return debug
+
+
 # ─── Admin interface ───
 
 ADMIN_HTML = """<!DOCTYPE html>
