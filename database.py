@@ -1,4 +1,5 @@
 import sqlite3
+import json
 import os
 
 DB_PATH = os.environ.get("DB_PATH", "data.db")
@@ -60,6 +61,14 @@ def init_db():
         conn.execute("ALTER TABLE keywords ADD COLUMN post_url TEXT")
     if "media_id" not in existing_cols:
         conn.execute("ALTER TABLE keywords ADD COLUMN media_id TEXT")
+    if "posts_json" not in existing_cols:
+        conn.execute("ALTER TABLE keywords ADD COLUMN posts_json TEXT")
+        legacy_rows = conn.execute(
+            "SELECT id, post_url, media_id FROM keywords WHERE post_url IS NOT NULL AND post_url != ''"
+        ).fetchall()
+        for row in legacy_rows:
+            posts = [{"url": row["post_url"], "media_id": row["media_id"]}]
+            conn.execute("UPDATE keywords SET posts_json = ? WHERE id = ?", (json.dumps(posts), row["id"]))
     conn.commit()
     conn.close()
 
@@ -144,20 +153,40 @@ def get_instagram_account_by_ig_id(instagram_id: str):
 
 # --- Keywords ---
 
+def _parse_posts(row) -> list:
+    raw = row["posts_json"]
+    if raw:
+        try:
+            posts = json.loads(raw)
+            if isinstance(posts, list):
+                return [p for p in posts if isinstance(p, dict) and p.get("url")]
+        except (ValueError, TypeError):
+            pass
+    if row["post_url"]:
+        return [{"url": row["post_url"], "media_id": row["media_id"]}]
+    return []
+
+
 def get_keywords(user_id: int) -> list:
     conn = get_db()
     rows = conn.execute(
         "SELECT * FROM keywords WHERE user_id = ?", (user_id,)
     ).fetchall()
     conn.close()
-    return rows
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["posts"] = _parse_posts(row)
+        result.append(item)
+    return result
 
 
-def create_keyword(user_id: int, keyword: str, message: str, post_url: str | None = None, media_id: str | None = None) -> int:
+def create_keyword(user_id: int, keyword: str, message: str, posts: list | None = None) -> int:
     conn = get_db()
+    posts_json = json.dumps(posts) if posts else None
     cur = conn.execute(
-        "INSERT INTO keywords (user_id, keyword, message, post_url, media_id) VALUES (?, ?, ?, ?, ?)",
-        (user_id, keyword, message, post_url, media_id),
+        "INSERT INTO keywords (user_id, keyword, message, posts_json) VALUES (?, ?, ?, ?)",
+        (user_id, keyword, message, posts_json),
     )
     conn.commit()
     kw_id = cur.lastrowid
@@ -215,18 +244,19 @@ def get_active_subscription(user_id: int):
 # --- Bulk updates ---
 
 def update_keywords(user_id: int, keywords: list):
-    """keywords: list of dicts {keyword, message, post_url, media_id}."""
+    """keywords: list of dicts {keyword, message, posts: [{url, media_id}, ...]}."""
     conn = get_db()
     conn.execute("DELETE FROM keywords WHERE user_id = ?", (user_id,))
     for item in keywords:
+        posts = item.get("posts") or []
+        posts_json = json.dumps(posts) if posts else None
         conn.execute(
-            "INSERT INTO keywords (user_id, keyword, message, post_url, media_id) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO keywords (user_id, keyword, message, posts_json) VALUES (?, ?, ?, ?)",
             (
                 user_id,
                 item["keyword"],
                 item.get("message", ""),
-                item.get("post_url"),
-                item.get("media_id"),
+                posts_json,
             ),
         )
     conn.commit()

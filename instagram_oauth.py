@@ -66,13 +66,21 @@ def parse_shortcode(post_url: str) -> str | None:
     return m.group(2) if m else None
 
 
-async def resolve_media_id(post_url: str, ig_user_id: str, access_token: str, max_pages: int = 10) -> str | None:
+async def resolve_post_info(post_url: str, ig_user_id: str, access_token: str, max_pages: int = 10) -> dict | None:
+    """Look up a post's media_id and a usable thumbnail URL on the connected IG account.
+
+    Returns {id, thumbnail, permalink, media_type} or None if not found.
+    """
     shortcode = parse_shortcode(post_url)
     if not shortcode or not ig_user_id or not access_token:
         return None
 
     url = f"{GRAPH_URL}/v21.0/{ig_user_id}/media"
-    params: dict = {"fields": "id,permalink", "access_token": access_token, "limit": 100}
+    params: dict = {
+        "fields": "id,permalink,media_url,thumbnail_url,media_type",
+        "access_token": access_token,
+        "limit": 100,
+    }
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         for _ in range(max_pages):
@@ -83,10 +91,25 @@ async def resolve_media_id(post_url: str, ig_user_id: str, access_token: str, ma
             for media in data.get("data", []):
                 permalink = media.get("permalink", "")
                 if f"/{shortcode}/" in permalink or permalink.endswith(f"/{shortcode}"):
-                    return str(media.get("id"))
+                    media_type = media.get("media_type", "")
+                    if media_type == "VIDEO":
+                        thumbnail = media.get("thumbnail_url") or media.get("media_url")
+                    else:
+                        thumbnail = media.get("media_url") or media.get("thumbnail_url")
+                    return {
+                        "id": str(media.get("id")),
+                        "thumbnail": thumbnail,
+                        "permalink": permalink,
+                        "media_type": media_type,
+                    }
             next_url = data.get("paging", {}).get("next")
             if not next_url:
                 return None
             url = next_url
             params = {}
     return None
+
+
+async def resolve_media_id(post_url: str, ig_user_id: str, access_token: str, max_pages: int = 10) -> str | None:
+    info = await resolve_post_info(post_url, ig_user_id, access_token, max_pages)
+    return info["id"] if info else None

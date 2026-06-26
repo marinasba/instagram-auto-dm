@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import random
+import unicodedata
 import httpx
 from fastapi import FastAPI, Request, Query, Depends, HTTPException
 from datetime import datetime, timedelta
@@ -51,6 +52,27 @@ async def save_config_to_github(config):
 
 CONFIG = load_config()
 
+
+def _normalize_text(s: str) -> str:
+    """Uppercase + strip diacritics so NAUSEE matches nausée and NAuSéE."""
+    if not s:
+        return ""
+    decomposed = unicodedata.normalize("NFD", s)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).upper().strip()
+
+
+def _normalize_keyword_posts(raw) -> list:
+    """Accept legacy single-dict {url, media_id} or list form, return list of dicts."""
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        if raw.get("url"):
+            return [{"url": raw["url"], "media_id": raw.get("media_id")}]
+        return []
+    if isinstance(raw, list):
+        return [p for p in raw if isinstance(p, dict) and p.get("url")]
+    return []
+
 VERIFY_TOKEN = os.environ["VERIFY_TOKEN"]
 ACCESS_TOKEN = os.environ["ACCESS_TOKEN"]
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", VERIFY_TOKEN)
@@ -77,8 +99,8 @@ def migrate_gariguettes():
     user_id = db.create_user("contact@gariguettes.fr", hash_password(pw))
     keyword_posts = CONFIG.get("keyword_posts", {})
     for kw, msg in CONFIG["keywords"].items():
-        kp = keyword_posts.get(kw) or {}
-        db.create_keyword(user_id, kw, msg, kp.get("url"), kp.get("media_id"))
+        posts = _normalize_keyword_posts(keyword_posts.get(kw))
+        db.create_keyword(user_id, kw, msg, posts)
     for txt in CONFIG.get("replies", []):
         db.create_reply(user_id, txt)
     expires = (datetime.utcnow() + timedelta(days=365)).isoformat()
@@ -313,18 +335,31 @@ function render() {
   const el = document.getElementById('keywords');
   if (!keywords.length) { el.innerHTML = '<div class="empty">Aucun mot-cl\u00e9 configur\u00e9</div>'; return; }
   el.innerHTML = keywords.map((kw, i) => {
-    const hasUrl = kw.post_url && kw.post_url.trim();
-    const triedSave = 'media_id' in kw;
-    let urlStatus;
-    if (hasUrl && kw.media_id) {
-      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">\u2713 Post associ\u00e9</p>';
-    } else if (hasUrl && triedSave) {
-      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>\u26a0 Post introuvable sur ton compte. V\u00e9rifie l'URL.</p>";
-    } else if (hasUrl) {
-      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Clique Enregistrer pour v\u00e9rifier ce post.</p>';
-    } else {
-      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se d\u00e9clenche sur tous tes posts.</p>';
-    }
+    if (!Array.isArray(kw.posts)) kw.posts = [];
+    const postsHtml = kw.posts.map((p, j) => {
+      const triedSave = 'media_id' in p;
+      const hasUrl = p.url && String(p.url).trim();
+      let preview = '';
+      if (hasUrl && p.media_id && p.thumbnail) {
+        preview = '<img src="' + esc(p.thumbnail) + '" alt="" style="width:56px;height:56px;border-radius:8px;object-fit:cover;flex-shrink:0;" onerror="this.style.display=\\'none\\'">';
+      } else if (hasUrl && p.media_id) {
+        preview = '<div style="width:56px;height:56px;border-radius:8px;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;">\u2713</div>';
+      } else if (hasUrl && triedSave) {
+        preview = '<div style="width:56px;height:56px;border-radius:8px;background:#fef2f2;color:#c0392b;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;">\u26a0</div>';
+      } else {
+        preview = '<div style="width:56px;height:56px;border-radius:8px;background:#f5f5f5;color:#bbb;display:flex;align-items:center;justify-content:center;flex-shrink:0;">\u2013</div>';
+      }
+      return `
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+          ${preview}
+          <input type="text" placeholder="https://www.instagram.com/p/..." value="${esc(p.url || '')}" onchange="setPostUrl(${i}, ${j}, this.value)" style="margin:0;flex:1;">
+          <button class="btn btn-delete" onclick="removePost(${i}, ${j})" style="padding:6px 10px;">X</button>
+        </div>
+      `;
+    }).join('');
+    const helper = kw.posts.length === 0
+      ? '<p style="color:#888;font-size:0.85em;margin:4px 0 8px;">Aucun post associ\u00e9 = se d\u00e9clenche sur tous tes posts.</p>'
+      : '';
     return `
     <div class="card">
       <div class="card-header">
@@ -333,12 +368,31 @@ function render() {
       </div>
       <label style="display:block;font-weight:600;margin-bottom:6px;font-size:0.9em;">Message DM</label>
       <textarea onchange="keywords[${i}].message=this.value">${esc(kw.message)}</textarea>
-      <label style="display:block;font-weight:600;margin:12px 0 6px;font-size:0.9em;">URL du post Instagram (optionnel)</label>
-      <input type="text" placeholder="https://www.instagram.com/p/..." value="${esc(kw.post_url)}" onchange="keywords[${i}].post_url=this.value;delete keywords[${i}].media_id;render();" style="margin-bottom:0;">
-      ${urlStatus}
+      <label style="display:block;font-weight:600;margin:12px 0 6px;font-size:0.9em;">Posts Instagram (optionnel)</label>
+      ${postsHtml}${helper}
+      <button onclick="addPost(${i})" style="background:white;color:#4a7c59;border:2px dashed #4a7c59;border-radius:8px;padding:8px 12px;font-size:0.9em;font-weight:600;cursor:pointer;width:100%;">+ Ajouter une URL de post</button>
     </div>
   `;
   }).join('');
+}
+
+function addPost(i) {
+  if (!Array.isArray(keywords[i].posts)) keywords[i].posts = [];
+  keywords[i].posts.push({url: ''});
+  render();
+}
+
+function removePost(i, j) {
+  keywords[i].posts.splice(j, 1);
+  render();
+}
+
+function setPostUrl(i, j, v) {
+  const url = (v || '').trim();
+  keywords[i].posts[j].url = url;
+  delete keywords[i].posts[j].media_id;
+  delete keywords[i].posts[j].thumbnail;
+  render();
 }
 
 function renderReplies() {
@@ -357,7 +411,7 @@ function addNew() {
   if (!kw) return;
   const key = kw.toUpperCase().trim();
   if (keywords.find(k => k.keyword === key)) { alert('Ce mot-cl\u00e9 existe d\u00e9j\u00e0 !'); return; }
-  keywords.unshift({keyword: key, message: '', post_url: ''});
+  keywords.unshift({keyword: key, message: '', posts: []});
   render();
   document.querySelector('.card:first-child textarea').focus();
 }
@@ -482,13 +536,44 @@ async def get_dashboard_config(request: Request):
         {
             "keyword": r["keyword"],
             "message": r["message"],
-            "post_url": r["post_url"],
-            "media_id": r["media_id"],
+            "posts": r["posts"],
         }
         for r in keywords_rows
     ]
     replies = [row["text"] for row in replies_rows]
     return {"keywords": keywords, "replies": replies}
+
+
+async def _resolve_posts_for_save(raw_posts, prev_posts, ig_user_id, access_token, keyword_label):
+    out: list = []
+    prev_by_url = {p.get("url"): p for p in (prev_posts or []) if p.get("url")}
+    seen_urls = set()
+    for p in raw_posts or []:
+        if not isinstance(p, dict):
+            continue
+        url = (p.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        prev = prev_by_url.get(url)
+        if prev and prev.get("media_id"):
+            out.append({
+                "url": url,
+                "media_id": prev["media_id"],
+                "thumbnail": prev.get("thumbnail"),
+            })
+            continue
+        media_id = None
+        thumbnail = None
+        if access_token and ig_user_id:
+            info = await instagram_oauth.resolve_post_info(url, ig_user_id, access_token)
+            if info:
+                media_id = info["id"]
+                thumbnail = info.get("thumbnail")
+            else:
+                logger.warning(f"URL non resolue: {url} (mot-cle {keyword_label})")
+        out.append({"url": url, "media_id": media_id, "thumbnail": thumbnail})
+    return out
 
 
 @app.put("/api/dashboard/config")
@@ -512,17 +597,12 @@ async def update_dashboard_config(request: Request):
         if not kw:
             continue
         msg = item.get("message", "")
-        post_url = (item.get("post_url") or "").strip() or None
-        media_id = None
-        if post_url:
-            prev = existing.get(kw)
-            if prev and prev["post_url"] == post_url and prev["media_id"]:
-                media_id = prev["media_id"]
-            elif access_token and ig_user_id:
-                media_id = await instagram_oauth.resolve_media_id(post_url, ig_user_id, access_token)
-                if not media_id:
-                    logger.warning(f"URL non resolue: {post_url} (mot-cle {kw})")
-        resolved.append({"keyword": kw, "message": msg, "post_url": post_url, "media_id": media_id})
+        raw_posts = item.get("posts")
+        if raw_posts is None and item.get("post_url"):
+            raw_posts = [{"url": item.get("post_url"), "media_id": item.get("media_id")}]
+        prev_posts = (existing.get(kw) or {}).get("posts") if existing.get(kw) else []
+        posts = await _resolve_posts_for_save(raw_posts, prev_posts, ig_user_id, access_token, kw)
+        resolved.append({"keyword": kw, "message": msg, "posts": posts})
 
     db.update_keywords(user["user_id"], resolved)
     db.update_replies(user["user_id"], data.get("replies", []))
@@ -677,19 +757,32 @@ function render() {
   const keys = Object.keys(keywords);
   if (!keys.length) { el.innerHTML = '<div class="empty">Aucun mot-clé configuré</div>'; return; }
   el.innerHTML = keys.map(k => {
-    const post = keywordPosts[k] || {};
-    const url = post.url || '';
-    const triedSave = 'media_id' in post;
-    let urlStatus;
-    if (url && post.media_id) {
-      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">✓ Post associé</p>';
-    } else if (url && triedSave) {
-      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>⚠ Post introuvable sur ton compte. Vérifie l'URL.</p>";
-    } else if (url) {
-      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Clique Enregistrer pour vérifier ce post.</p>';
-    } else {
-      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se déclenche sur tous les posts.</p>';
-    }
+    const posts = Array.isArray(keywordPosts[k]) ? keywordPosts[k] : [];
+    keywordPosts[k] = posts;
+    const postsHtml = posts.map((p, j) => {
+      const triedSave = 'media_id' in p;
+      const hasUrl = p.url && String(p.url).trim();
+      let preview;
+      if (hasUrl && p.media_id && p.thumbnail) {
+        preview = '<img src="' + escHtml(p.thumbnail) + '" alt="" style="width:56px;height:56px;border-radius:8px;object-fit:cover;flex-shrink:0;" onerror="this.style.display=\\'none\\'">';
+      } else if (hasUrl && p.media_id) {
+        preview = '<div style="width:56px;height:56px;border-radius:8px;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;">✓</div>';
+      } else if (hasUrl && triedSave) {
+        preview = '<div style="width:56px;height:56px;border-radius:8px;background:#fef2f2;color:#c0392b;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;">⚠</div>';
+      } else {
+        preview = '<div style="width:56px;height:56px;border-radius:8px;background:#f5f5f5;color:#bbb;display:flex;align-items:center;justify-content:center;flex-shrink:0;">–</div>';
+      }
+      return `
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+          ${preview}
+          <input type="text" placeholder="https://www.instagram.com/p/..." value="${escHtml(p.url || '')}" onchange="setPostUrl('${k}', ${j}, this.value)" style="margin:0;flex:1;">
+          <button class="btn btn-delete" onclick="removePost('${k}', ${j})" style="padding:6px 10px;">X</button>
+        </div>
+      `;
+    }).join('');
+    const helper = posts.length === 0
+      ? '<p style="color:#888;font-size:0.85em;margin:4px 0 8px;">Aucun post associé = se déclenche sur tous tes posts.</p>'
+      : '';
     return `
     <div class="card">
       <div class="card-header">
@@ -698,18 +791,32 @@ function render() {
       </div>
       <label style="display:block;font-weight:600;margin-bottom:6px;font-size:0.9em;">Message DM</label>
       <textarea onchange="keywords['${k}']=this.value">${keywords[k]}</textarea>
-      <label style="display:block;font-weight:600;margin:12px 0 6px;font-size:0.9em;">URL du post Instagram (optionnel)</label>
-      <input type="text" placeholder="https://www.instagram.com/p/..." value="${escHtml(url)}" onchange="setUrl('${k}', this.value)" style="margin-bottom:0;">
-      ${urlStatus}
+      <label style="display:block;font-weight:600;margin:12px 0 6px;font-size:0.9em;">Posts Instagram (optionnel)</label>
+      ${postsHtml}${helper}
+      <button onclick="addPost('${k}')" style="background:white;color:#4a7c59;border:2px dashed #4a7c59;border-radius:8px;padding:8px 12px;font-size:0.9em;font-weight:600;cursor:pointer;width:100%;">+ Ajouter une URL de post</button>
     </div>
   `;
   }).join('');
 }
 
-function setUrl(k, v) {
+function addPost(k) {
+  if (!Array.isArray(keywordPosts[k])) keywordPosts[k] = [];
+  keywordPosts[k].push({url: ''});
+  render();
+}
+
+function removePost(k, j) {
+  if (Array.isArray(keywordPosts[k])) {
+    keywordPosts[k].splice(j, 1);
+    if (!keywordPosts[k].length) delete keywordPosts[k];
+  }
+  render();
+}
+
+function setPostUrl(k, j, v) {
   const url = (v || '').trim();
-  if (!url) { delete keywordPosts[k]; render(); return; }
-  keywordPosts[k] = {url: url};
+  if (!Array.isArray(keywordPosts[k])) keywordPosts[k] = [];
+  keywordPosts[k][j] = {url: url};
   render();
 }
 
@@ -786,10 +893,12 @@ async def get_keywords(_=Depends(check_admin)):
 
 @app.get("/api/config")
 async def get_config(_=Depends(check_admin)):
+    raw_posts = CONFIG.get("keyword_posts", {})
+    normalized = {kw: _normalize_keyword_posts(v) for kw, v in raw_posts.items()}
     return {
         "keywords": CONFIG["keywords"],
         "replies": CONFIG.get("replies", []),
-        "keyword_posts": CONFIG.get("keyword_posts", {}),
+        "keyword_posts": {kw: posts for kw, posts in normalized.items() if posts},
     }
 
 
@@ -805,24 +914,18 @@ async def update_config(request: Request, _=Depends(check_admin)):
     access_token = ig["access_token"] if ig else None
     ig_user_id = ig["instagram_id"] if ig else None
 
-    previous_posts = CONFIG.get("keyword_posts", {})
+    previous_posts = {kw: _normalize_keyword_posts(v) for kw, v in CONFIG.get("keyword_posts", {}).items()}
     resolved_posts: dict = {}
-    for kw, post in new_keyword_posts_input.items():
-        url = ((post.get("url") if isinstance(post, dict) else "") or "").strip()
-        if not url:
-            continue
+    for kw, raw in new_keyword_posts_input.items():
         if kw not in new_keywords:
             continue
-        prev = previous_posts.get(kw) or {}
-        if isinstance(prev, dict) and prev.get("url") == url and prev.get("media_id"):
-            resolved_posts[kw] = {"url": url, "media_id": prev["media_id"]}
+        raw_list = _normalize_keyword_posts(raw)
+        if not raw_list:
             continue
-        media_id = None
-        if access_token and ig_user_id:
-            media_id = await instagram_oauth.resolve_media_id(url, ig_user_id, access_token)
-            if not media_id:
-                logger.warning(f"URL admin non resolue: {url} (mot-cle {kw})")
-        resolved_posts[kw] = {"url": url, "media_id": media_id}
+        prev_list = previous_posts.get(kw, [])
+        posts = await _resolve_posts_for_save(raw_list, prev_list, ig_user_id, access_token, kw)
+        if posts:
+            resolved_posts[kw] = posts
 
     CONFIG["keywords"] = new_keywords
     CONFIG["replies"] = new_replies
@@ -832,12 +935,7 @@ async def update_config(request: Request, _=Depends(check_admin)):
 
     if user:
         kw_list = [
-            {
-                "keyword": kw,
-                "message": msg,
-                "post_url": (resolved_posts.get(kw) or {}).get("url"),
-                "media_id": (resolved_posts.get(kw) or {}).get("media_id"),
-            }
+            {"keyword": kw, "message": msg, "posts": resolved_posts.get(kw, [])}
             for kw, msg in new_keywords.items()
         ]
         db.update_keywords(user["id"], kw_list)
@@ -885,7 +983,7 @@ async def handle_webhook(request: Request):
 
             value = change.get("value", {})
             comment_id = value.get("id")
-            comment_text = value.get("text", "").upper().strip()
+            comment_text_norm = _normalize_text(value.get("text", ""))
             username = value.get("from", {}).get("username", "inconnu")
 
             if not comment_id or comment_id in sent_comments:
@@ -899,11 +997,13 @@ async def handle_webhook(request: Request):
                 kw_rows = db.get_keywords(user_id)
                 reply_texts = [r["text"] for r in db.get_replies(user_id)]
                 for kw in kw_rows:
-                    if kw["keyword"].upper() not in comment_text:
+                    if _normalize_text(kw["keyword"]) not in comment_text_norm:
                         continue
-                    if kw["post_url"]:
-                        if not kw["media_id"] or kw["media_id"] != post_media_id:
-                            logger.info(f"Mot-cle {kw['keyword']} ignore: post {post_media_id} != cible {kw['media_id']}")
+                    posts = kw.get("posts") or []
+                    if posts:
+                        target_ids = [p.get("media_id") for p in posts if p.get("media_id")]
+                        if not target_ids or post_media_id not in target_ids:
+                            logger.info(f"Mot-cle {kw['keyword']} ignore: post {post_media_id} pas dans {target_ids}")
                             continue
                     await send_dm(comment_id, kw["message"], username, kw["keyword"], token)
                     await reply_to_comment(comment_id, username, reply_texts, token)
@@ -911,14 +1011,13 @@ async def handle_webhook(request: Request):
             else:
                 keyword_posts = CONFIG.get("keyword_posts", {})
                 for keyword, message in CONFIG["keywords"].items():
-                    if keyword.upper() not in comment_text:
+                    if _normalize_text(keyword) not in comment_text_norm:
                         continue
-                    kp = keyword_posts.get(keyword) or {}
-                    target_media_id = kp.get("media_id") if isinstance(kp, dict) else None
-                    target_url = kp.get("url") if isinstance(kp, dict) else None
-                    if target_url:
-                        if not target_media_id or target_media_id != post_media_id:
-                            logger.info(f"Mot-cle {keyword} ignore: post {post_media_id} != cible {target_media_id}")
+                    posts = _normalize_keyword_posts(keyword_posts.get(keyword))
+                    if posts:
+                        target_ids = [p.get("media_id") for p in posts if p.get("media_id")]
+                        if not target_ids or post_media_id not in target_ids:
+                            logger.info(f"Mot-cle {keyword} ignore: post {post_media_id} pas dans {target_ids}")
                             continue
                     await send_dm(comment_id, message, username, keyword, ACCESS_TOKEN)
                     await reply_to_comment(comment_id, username, CONFIG.get("replies", []), ACCESS_TOKEN)
