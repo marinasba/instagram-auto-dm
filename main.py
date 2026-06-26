@@ -446,6 +446,7 @@ async function saveAll() {
 
 load();
 </script>
+<button class="btn btn-save" onclick="saveAll()" style="position:fixed;bottom:20px;right:20px;width:auto;padding:14px 28px;box-shadow:0 4px 16px rgba(0,0,0,0.25);z-index:1000;border-radius:999px;">Enregistrer</button>
 </body></html>"""
 
 
@@ -877,6 +878,7 @@ async function saveAll() {
 
 load();
 </script>
+<button class="btn btn-save" onclick="saveAll()" style="position:fixed;bottom:20px;right:20px;width:auto;padding:14px 28px;box-shadow:0 4px 16px rgba(0,0,0,0.25);z-index:1000;border-radius:999px;">Enregistrer</button>
 </body>
 </html>"""
 
