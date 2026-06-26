@@ -319,7 +319,7 @@ function render() {
     if (hasUrl && resolvedOk) {
       urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">\u2713 Post associ\u00e9 (id ' + esc(kw.media_id) + ')</p>';
     } else if (hasUrl && !resolvedOk) {
-      urlStatus = "<p style=\"color:#c0392b;font-size:0.85em;margin-top:4px;\">\u26a0 Post non trouv\u00e9. V\u00e9rifie l'URL et clique sur Enregistrer.</p>";
+      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>\u26a0 Post non trouv\u00e9. V\u00e9rifie l'URL et clique sur Enregistrer.</p>";
     } else {
       urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se d\u00e9clenche sur tous tes posts.</p>';
     }
@@ -682,7 +682,7 @@ function render() {
     if (url && mediaId) {
       urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">✓ Post associé (id ' + escHtml(mediaId) + ')</p>';
     } else if (url && !mediaId) {
-      urlStatus = "<p style=\"color:#c0392b;font-size:0.85em;margin-top:4px;\">⚠ Post non trouvé. Vérifie l'URL puis Enregistre.</p>";
+      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>⚠ Post non trouvé. Vérifie l'URL puis Enregistre.</p>";
     } else {
       urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se déclenche sur tous les posts.</p>';
     }
