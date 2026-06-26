@@ -314,12 +314,14 @@ function render() {
   if (!keywords.length) { el.innerHTML = '<div class="empty">Aucun mot-cl\u00e9 configur\u00e9</div>'; return; }
   el.innerHTML = keywords.map((kw, i) => {
     const hasUrl = kw.post_url && kw.post_url.trim();
-    const resolvedOk = hasUrl && kw.media_id;
-    let urlStatus = '';
-    if (hasUrl && resolvedOk) {
-      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">\u2713 Post associ\u00e9 (id ' + esc(kw.media_id) + ')</p>';
-    } else if (hasUrl && !resolvedOk) {
-      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>\u26a0 Post non trouv\u00e9. V\u00e9rifie l'URL et clique sur Enregistrer.</p>";
+    const triedSave = 'media_id' in kw;
+    let urlStatus;
+    if (hasUrl && kw.media_id) {
+      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">\u2713 Post associ\u00e9</p>';
+    } else if (hasUrl && triedSave) {
+      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>\u26a0 Post introuvable sur ton compte. V\u00e9rifie l'URL.</p>";
+    } else if (hasUrl) {
+      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Clique Enregistrer pour v\u00e9rifier ce post.</p>';
     } else {
       urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se d\u00e9clenche sur tous tes posts.</p>';
     }
@@ -332,7 +334,7 @@ function render() {
       <label style="display:block;font-weight:600;margin-bottom:6px;font-size:0.9em;">Message DM</label>
       <textarea onchange="keywords[${i}].message=this.value">${esc(kw.message)}</textarea>
       <label style="display:block;font-weight:600;margin:12px 0 6px;font-size:0.9em;">URL du post Instagram (optionnel)</label>
-      <input type="text" placeholder="https://www.instagram.com/p/..." value="${esc(kw.post_url)}" onchange="keywords[${i}].post_url=this.value;keywords[${i}].media_id=null;render();" style="margin-bottom:0;">
+      <input type="text" placeholder="https://www.instagram.com/p/..." value="${esc(kw.post_url)}" onchange="keywords[${i}].post_url=this.value;delete keywords[${i}].media_id;render();" style="margin-bottom:0;">
       ${urlStatus}
     </div>
   `;
@@ -355,7 +357,7 @@ function addNew() {
   if (!kw) return;
   const key = kw.toUpperCase().trim();
   if (keywords.find(k => k.keyword === key)) { alert('Ce mot-cl\u00e9 existe d\u00e9j\u00e0 !'); return; }
-  keywords.unshift({keyword: key, message: '', post_url: '', media_id: null});
+  keywords.unshift({keyword: key, message: '', post_url: ''});
   render();
   document.querySelector('.card:first-child textarea').focus();
 }
@@ -582,43 +584,6 @@ async def get_logs(_=Depends(check_admin)):
     return recent_events[-50:]
 
 
-@app.get("/debug/resolve")
-async def debug_resolve(url: str = "", _=Depends(check_admin)):
-    user = db.get_user_by_email("contact@gariguettes.fr")
-    ig = db.get_instagram_account(user["id"]) if user else None
-    if not ig:
-        return {"error": "no instagram account"}
-    shortcode = instagram_oauth.parse_shortcode(url)
-    debug: dict = {"input_url": url, "parsed_shortcode": shortcode, "ig_user_id": ig["instagram_id"], "pages": []}
-    if not shortcode:
-        return debug
-    api_url = f"{instagram_oauth.GRAPH_URL}/v21.0/{ig['instagram_id']}/media"
-    params: dict = {"fields": "id,permalink", "access_token": ig["access_token"], "limit": 100}
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        for page in range(5):
-            resp = await client.get(api_url, params=params)
-            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"raw": resp.text}
-            permalinks = [m.get("permalink", "") for m in body.get("data", [])]
-            match = next((m for m in body.get("data", []) if f"/{shortcode}/" in m.get("permalink", "") or m.get("permalink", "").endswith(f"/{shortcode}")), None)
-            debug["pages"].append({
-                "page": page,
-                "status": resp.status_code,
-                "count": len(body.get("data", [])),
-                "error": body.get("error"),
-                "sample_permalinks": permalinks[:3],
-                "match": match,
-            })
-            if match:
-                debug["resolved_media_id"] = match.get("id")
-                return debug
-            next_url = body.get("paging", {}).get("next")
-            if not next_url:
-                break
-            api_url = next_url
-            params = {}
-    return debug
-
-
 # ─── Admin interface ───
 
 ADMIN_HTML = """<!DOCTYPE html>
@@ -714,12 +679,14 @@ function render() {
   el.innerHTML = keys.map(k => {
     const post = keywordPosts[k] || {};
     const url = post.url || '';
-    const mediaId = post.media_id || '';
+    const triedSave = 'media_id' in post;
     let urlStatus;
-    if (url && mediaId) {
-      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">✓ Post associé (id ' + escHtml(mediaId) + ')</p>';
-    } else if (url && !mediaId) {
-      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>⚠ Post non trouvé. Vérifie l'URL puis Enregistre.</p>";
+    if (url && post.media_id) {
+      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">✓ Post associé</p>';
+    } else if (url && triedSave) {
+      urlStatus = "<p style='color:#c0392b;font-size:0.85em;margin-top:4px;'>⚠ Post introuvable sur ton compte. Vérifie l'URL.</p>";
+    } else if (url) {
+      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Clique Enregistrer pour vérifier ce post.</p>';
     } else {
       urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se déclenche sur tous les posts.</p>';
     }
@@ -742,7 +709,7 @@ function render() {
 function setUrl(k, v) {
   const url = (v || '').trim();
   if (!url) { delete keywordPosts[k]; render(); return; }
-  keywordPosts[k] = {url: url, media_id: null};
+  keywordPosts[k] = {url: url};
   render();
 }
 
