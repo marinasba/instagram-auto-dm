@@ -35,7 +35,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id),
             keyword TEXT NOT NULL,
-            message TEXT NOT NULL DEFAULT ''
+            message TEXT NOT NULL DEFAULT '',
+            post_url TEXT,
+            media_id TEXT
         );
 
         CREATE TABLE IF NOT EXISTS replies (
@@ -53,6 +55,11 @@ def init_db():
             active INTEGER DEFAULT 1
         );
     """)
+    existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(keywords)")}
+    if "post_url" not in existing_cols:
+        conn.execute("ALTER TABLE keywords ADD COLUMN post_url TEXT")
+    if "media_id" not in existing_cols:
+        conn.execute("ALTER TABLE keywords ADD COLUMN media_id TEXT")
     conn.commit()
     conn.close()
 
@@ -146,11 +153,11 @@ def get_keywords(user_id: int) -> list:
     return rows
 
 
-def create_keyword(user_id: int, keyword: str, message: str) -> int:
+def create_keyword(user_id: int, keyword: str, message: str, post_url: str | None = None, media_id: str | None = None) -> int:
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO keywords (user_id, keyword, message) VALUES (?, ?, ?)",
-        (user_id, keyword, message),
+        "INSERT INTO keywords (user_id, keyword, message, post_url, media_id) VALUES (?, ?, ?, ?, ?)",
+        (user_id, keyword, message, post_url, media_id),
     )
     conn.commit()
     kw_id = cur.lastrowid
@@ -207,13 +214,20 @@ def get_active_subscription(user_id: int):
 
 # --- Bulk updates ---
 
-def update_keywords(user_id: int, keywords: dict):
+def update_keywords(user_id: int, keywords: list):
+    """keywords: list of dicts {keyword, message, post_url, media_id}."""
     conn = get_db()
     conn.execute("DELETE FROM keywords WHERE user_id = ?", (user_id,))
-    for kw, msg in keywords.items():
+    for item in keywords:
         conn.execute(
-            "INSERT INTO keywords (user_id, keyword, message) VALUES (?, ?, ?)",
-            (user_id, kw, msg),
+            "INSERT INTO keywords (user_id, keyword, message, post_url, media_id) VALUES (?, ?, ?, ?, ?)",
+            (
+                user_id,
+                item["keyword"],
+                item.get("message", ""),
+                item.get("post_url"),
+                item.get("media_id"),
+            ),
         )
     conn.commit()
     conn.close()

@@ -75,8 +75,10 @@ def migrate_gariguettes():
         return
     pw = os.environ.get("GARIGUETTES_PASSWORD", ADMIN_TOKEN)
     user_id = db.create_user("contact@gariguettes.fr", hash_password(pw))
+    keyword_posts = CONFIG.get("keyword_posts", {})
     for kw, msg in CONFIG["keywords"].items():
-        db.create_keyword(user_id, kw, msg)
+        kp = keyword_posts.get(kw) or {}
+        db.create_keyword(user_id, kw, msg, kp.get("url"), kp.get("media_id"))
     for txt in CONFIG.get("replies", []):
         db.create_reply(user_id, txt)
     expires = (datetime.utcnow() + timedelta(days=365)).isoformat()
@@ -266,8 +268,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-let keywords = {};
+let keywords = [];
 let replies = [];
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 async function loadUser() {
   const r = await fetch('/api/me');
@@ -297,25 +303,40 @@ async function load() {
   const r = await fetch('/api/dashboard/config');
   if (!r.ok) return;
   const data = await r.json();
-  keywords = data.keywords;
-  replies = data.replies;
+  keywords = data.keywords || [];
+  replies = data.replies || [];
   render();
   renderReplies();
 }
 
 function render() {
   const el = document.getElementById('keywords');
-  const keys = Object.keys(keywords);
-  if (!keys.length) { el.innerHTML = '<div class="empty">Aucun mot-cl\u00e9 configur\u00e9</div>'; return; }
-  el.innerHTML = keys.map(k => `
+  if (!keywords.length) { el.innerHTML = '<div class="empty">Aucun mot-cl\u00e9 configur\u00e9</div>'; return; }
+  el.innerHTML = keywords.map((kw, i) => {
+    const hasUrl = kw.post_url && kw.post_url.trim();
+    const resolvedOk = hasUrl && kw.media_id;
+    let urlStatus = '';
+    if (hasUrl && resolvedOk) {
+      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">\u2713 Post associ\u00e9 (id ' + esc(kw.media_id) + ')</p>';
+    } else if (hasUrl && !resolvedOk) {
+      urlStatus = '<p style="color:#c0392b;font-size:0.85em;margin-top:4px;">\u26a0 Post non trouv\u00e9. V\u00e9rifie l\'URL et clique sur Enregistrer.</p>';
+    } else {
+      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se d\u00e9clenche sur tous tes posts.</p>';
+    }
+    return `
     <div class="card">
       <div class="card-header">
-        <span class="keyword">${k}</span>
-        <button class="btn btn-delete" onclick="remove('${k}')">Supprimer</button>
+        <span class="keyword">${esc(kw.keyword)}</span>
+        <button class="btn btn-delete" onclick="remove(${i})">Supprimer</button>
       </div>
-      <textarea onchange="keywords['${k}']=this.value">${keywords[k]}</textarea>
+      <label style="display:block;font-weight:600;margin-bottom:6px;font-size:0.9em;">Message DM</label>
+      <textarea onchange="keywords[${i}].message=this.value">${esc(kw.message)}</textarea>
+      <label style="display:block;font-weight:600;margin:12px 0 6px;font-size:0.9em;">URL du post Instagram (optionnel)</label>
+      <input type="text" placeholder="https://www.instagram.com/p/..." value="${esc(kw.post_url)}" onchange="keywords[${i}].post_url=this.value;keywords[${i}].media_id=null;render();" style="margin-bottom:0;">
+      ${urlStatus}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderReplies() {
@@ -323,7 +344,7 @@ function renderReplies() {
   if (!replies.length) { el.innerHTML = '<div class="empty">Aucune r\u00e9ponse configur\u00e9e</div>'; return; }
   el.innerHTML = replies.map((r, i) => `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-      <input type="text" value="${r}" onchange="replies[${i}]=this.value" style="margin:0;flex:1;">
+      <input type="text" value="${esc(r)}" onchange="replies[${i}]=this.value" style="margin:0;flex:1;">
       <button class="btn btn-delete" onclick="replies.splice(${i},1);renderReplies();">X</button>
     </div>
   `).join('');
@@ -333,11 +354,8 @@ function addNew() {
   const kw = prompt('Nouveau mot-cl\u00e9 (ex: CHARIOT, GUIDE, TISANE) :');
   if (!kw) return;
   const key = kw.toUpperCase().trim();
-  if (keywords[key]) { alert('Ce mot-cl\u00e9 existe d\u00e9j\u00e0 !'); return; }
-  const updated = {};
-  updated[key] = '';
-  Object.keys(keywords).forEach(k => updated[k] = keywords[k]);
-  keywords = updated;
+  if (keywords.find(k => k.keyword === key)) { alert('Ce mot-cl\u00e9 existe d\u00e9j\u00e0 !'); return; }
+  keywords.unshift({keyword: key, message: '', post_url: '', media_id: null});
   render();
   document.querySelector('.card:first-child textarea').focus();
 }
@@ -348,19 +366,24 @@ function addReply() {
   document.querySelector('#replies input:last-of-type').focus();
 }
 
-function remove(k) {
-  if (!confirm('Supprimer le mot-cl\u00e9 ' + k + ' ?')) return;
-  delete keywords[k];
+function remove(i) {
+  if (!confirm('Supprimer le mot-cl\u00e9 ' + keywords[i].keyword + ' ?')) return;
+  keywords.splice(i, 1);
   render();
 }
 
 async function saveAll() {
   const btns = document.querySelectorAll('.btn-save');
-  await fetch('/api/dashboard/config', {
+  btns.forEach(btn => { btn.textContent = 'Enregistrement...'; });
+  const r = await fetch('/api/dashboard/config', {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({keywords, replies: replies.filter(r => r.trim())})
   });
+  if (r.ok) {
+    const d = await r.json();
+    if (d.keywords) { keywords = d.keywords; render(); }
+  }
   btns.forEach(btn => { btn.textContent = 'Enregistr\u00e9 !'; btn.classList.add('saved'); });
   setTimeout(() => btns.forEach(btn => { btn.textContent = 'Enregistrer'; btn.classList.remove('saved'); }), 2500);
 }
@@ -453,7 +476,15 @@ async def get_dashboard_config(request: Request):
         raise HTTPException(status_code=401, detail="Non connect\u00e9")
     keywords_rows = db.get_keywords(user["user_id"])
     replies_rows = db.get_replies(user["user_id"])
-    keywords = {row["keyword"]: row["message"] for row in keywords_rows}
+    keywords = [
+        {
+            "keyword": r["keyword"],
+            "message": r["message"],
+            "post_url": r["post_url"],
+            "media_id": r["media_id"],
+        }
+        for r in keywords_rows
+    ]
     replies = [row["text"] for row in replies_rows]
     return {"keywords": keywords, "replies": replies}
 
@@ -464,9 +495,36 @@ async def update_dashboard_config(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Non connect\u00e9")
     data = await request.json()
-    db.update_keywords(user["user_id"], data.get("keywords", {}))
+    raw_keywords = data.get("keywords", [])
+    if isinstance(raw_keywords, dict):
+        raw_keywords = [{"keyword": k, "message": v} for k, v in raw_keywords.items()]
+
+    ig = db.get_instagram_account(user["user_id"])
+    access_token = ig["access_token"] if ig else None
+    ig_user_id = ig["instagram_id"] if ig else None
+
+    existing = {row["keyword"]: row for row in db.get_keywords(user["user_id"])}
+    resolved: list = []
+    for item in raw_keywords:
+        kw = (item.get("keyword") or "").strip().upper()
+        if not kw:
+            continue
+        msg = item.get("message", "")
+        post_url = (item.get("post_url") or "").strip() or None
+        media_id = None
+        if post_url:
+            prev = existing.get(kw)
+            if prev and prev["post_url"] == post_url and prev["media_id"]:
+                media_id = prev["media_id"]
+            elif access_token and ig_user_id:
+                media_id = await instagram_oauth.resolve_media_id(post_url, ig_user_id, access_token)
+                if not media_id:
+                    logger.warning(f"URL non resolue: {post_url} (mot-cle {kw})")
+        resolved.append({"keyword": kw, "message": msg, "post_url": post_url, "media_id": media_id})
+
+    db.update_keywords(user["user_id"], resolved)
     db.update_replies(user["user_id"], data.get("replies", []))
-    return {"status": "ok"}
+    return {"status": "ok", "keywords": resolved}
 
 
 # ─── Instagram OAuth ───
@@ -588,7 +646,12 @@ ADMIN_HTML = """<!DOCTYPE html>
 <script>
 const TOKEN = new URLSearchParams(location.search).get('token');
 let keywords = {};
+let keywordPosts = {};
 let replies = [];
+
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -600,8 +663,9 @@ function switchTab(tab) {
 async function load() {
   const r = await fetch('/api/config?token=' + TOKEN);
   const data = await r.json();
-  keywords = data.keywords;
-  replies = data.replies;
+  keywords = data.keywords || {};
+  keywordPosts = data.keyword_posts || {};
+  replies = data.replies || [];
   render();
   renderReplies();
 }
@@ -610,15 +674,39 @@ function render() {
   const el = document.getElementById('keywords');
   const keys = Object.keys(keywords);
   if (!keys.length) { el.innerHTML = '<div class="empty">Aucun mot-clé configuré</div>'; return; }
-  el.innerHTML = keys.map(k => `
+  el.innerHTML = keys.map(k => {
+    const post = keywordPosts[k] || {};
+    const url = post.url || '';
+    const mediaId = post.media_id || '';
+    let urlStatus;
+    if (url && mediaId) {
+      urlStatus = '<p style="color:#16a34a;font-size:0.85em;margin-top:4px;">✓ Post associé (id ' + escHtml(mediaId) + ')</p>';
+    } else if (url && !mediaId) {
+      urlStatus = '<p style="color:#c0392b;font-size:0.85em;margin-top:4px;">⚠ Post non trouvé. Vérifie l\'URL puis Enregistre.</p>';
+    } else {
+      urlStatus = '<p style="color:#888;font-size:0.85em;margin-top:4px;">Vide = se déclenche sur tous les posts.</p>';
+    }
+    return `
     <div class="card">
       <div class="card-header">
         <span class="keyword">${k}</span>
         <button class="btn btn-delete" onclick="remove('${k}')">Supprimer</button>
       </div>
+      <label style="display:block;font-weight:600;margin-bottom:6px;font-size:0.9em;">Message DM</label>
       <textarea onchange="keywords['${k}']=this.value">${keywords[k]}</textarea>
+      <label style="display:block;font-weight:600;margin:12px 0 6px;font-size:0.9em;">URL du post Instagram (optionnel)</label>
+      <input type="text" placeholder="https://www.instagram.com/p/..." value="${escHtml(url)}" onchange="setUrl('${k}', this.value)" style="margin-bottom:0;">
+      ${urlStatus}
     </div>
-  `).join('');
+  `;
+  }).join('');
+}
+
+function setUrl(k, v) {
+  const url = (v || '').trim();
+  if (!url) { delete keywordPosts[k]; render(); return; }
+  keywordPosts[k] = {url: url, media_id: null};
+  render();
 }
 
 function renderReplies() {
@@ -654,16 +742,22 @@ function addReply() {
 function remove(k) {
   if (!confirm('Supprimer le mot-clé ' + k + ' ?')) return;
   delete keywords[k];
+  delete keywordPosts[k];
   render();
 }
 
 async function saveAll() {
   const btns = document.querySelectorAll('.btn-save');
-  await fetch('/api/config?token=' + TOKEN, {
+  btns.forEach(btn => { btn.textContent = 'Enregistrement...'; });
+  const resp = await fetch('/api/config?token=' + TOKEN, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({keywords, replies: replies.filter(r => r.trim())})
+    body: JSON.stringify({keywords, keyword_posts: keywordPosts, replies: replies.filter(r => r.trim())})
   });
+  if (resp.ok) {
+    const d = await resp.json();
+    if (d.keyword_posts) { keywordPosts = d.keyword_posts; render(); }
+  }
   btns.forEach(btn => { btn.textContent = 'Enregistr\u00e9 !'; btn.classList.add('saved'); });
   setTimeout(() => btns.forEach(btn => { btn.textContent = 'Enregistrer'; btn.classList.remove('saved'); }), 2500);
 }
@@ -688,17 +782,64 @@ async def get_keywords(_=Depends(check_admin)):
 
 @app.get("/api/config")
 async def get_config(_=Depends(check_admin)):
-    return {"keywords": CONFIG["keywords"], "replies": CONFIG.get("replies", [])}
+    return {
+        "keywords": CONFIG["keywords"],
+        "replies": CONFIG.get("replies", []),
+        "keyword_posts": CONFIG.get("keyword_posts", {}),
+    }
 
 
 @app.put("/api/config")
 async def update_config(request: Request, _=Depends(check_admin)):
     data = await request.json()
-    CONFIG["keywords"] = data.get("keywords", {})
-    CONFIG["replies"] = data.get("replies", [])
+    new_keywords = data.get("keywords", {})
+    new_replies = data.get("replies", [])
+    new_keyword_posts_input = data.get("keyword_posts", {})
+
+    user = db.get_user_by_email("contact@gariguettes.fr")
+    ig = db.get_instagram_account(user["id"]) if user else None
+    access_token = ig["access_token"] if ig else None
+    ig_user_id = ig["instagram_id"] if ig else None
+
+    previous_posts = CONFIG.get("keyword_posts", {})
+    resolved_posts: dict = {}
+    for kw, post in new_keyword_posts_input.items():
+        url = ((post.get("url") if isinstance(post, dict) else "") or "").strip()
+        if not url:
+            continue
+        if kw not in new_keywords:
+            continue
+        prev = previous_posts.get(kw) or {}
+        if isinstance(prev, dict) and prev.get("url") == url and prev.get("media_id"):
+            resolved_posts[kw] = {"url": url, "media_id": prev["media_id"]}
+            continue
+        media_id = None
+        if access_token and ig_user_id:
+            media_id = await instagram_oauth.resolve_media_id(url, ig_user_id, access_token)
+            if not media_id:
+                logger.warning(f"URL admin non resolue: {url} (mot-cle {kw})")
+        resolved_posts[kw] = {"url": url, "media_id": media_id}
+
+    CONFIG["keywords"] = new_keywords
+    CONFIG["replies"] = new_replies
+    CONFIG["keyword_posts"] = resolved_posts
     save_config(CONFIG)
     await save_config_to_github(CONFIG)
-    return {"status": "ok"}
+
+    if user:
+        kw_list = [
+            {
+                "keyword": kw,
+                "message": msg,
+                "post_url": (resolved_posts.get(kw) or {}).get("url"),
+                "media_id": (resolved_posts.get(kw) or {}).get("media_id"),
+            }
+            for kw, msg in new_keywords.items()
+        ]
+        db.update_keywords(user["id"], kw_list)
+        db.update_replies(user["id"], new_replies)
+
+    return {"status": "ok", "keyword_posts": resolved_posts}
 
 
 @app.put("/api/keywords")
@@ -746,22 +887,38 @@ async def handle_webhook(request: Request):
             if not comment_id or comment_id in sent_comments:
                 continue
 
+            post_media_id = str(value.get("media", {}).get("id", "")) or None
+
             if ig_account:
                 user_id = ig_account["user_id"]
                 token = ig_account["access_token"]
                 kw_rows = db.get_keywords(user_id)
                 reply_texts = [r["text"] for r in db.get_replies(user_id)]
                 for kw in kw_rows:
-                    if kw["keyword"].upper() in comment_text:
-                        await send_dm(comment_id, kw["message"], username, kw["keyword"], token)
-                        await reply_to_comment(comment_id, username, reply_texts, token)
-                        break
+                    if kw["keyword"].upper() not in comment_text:
+                        continue
+                    if kw["post_url"]:
+                        if not kw["media_id"] or kw["media_id"] != post_media_id:
+                            logger.info(f"Mot-cle {kw['keyword']} ignore: post {post_media_id} != cible {kw['media_id']}")
+                            continue
+                    await send_dm(comment_id, kw["message"], username, kw["keyword"], token)
+                    await reply_to_comment(comment_id, username, reply_texts, token)
+                    break
             else:
+                keyword_posts = CONFIG.get("keyword_posts", {})
                 for keyword, message in CONFIG["keywords"].items():
-                    if keyword.upper() in comment_text:
-                        await send_dm(comment_id, message, username, keyword, ACCESS_TOKEN)
-                        await reply_to_comment(comment_id, username, CONFIG.get("replies", []), ACCESS_TOKEN)
-                        break
+                    if keyword.upper() not in comment_text:
+                        continue
+                    kp = keyword_posts.get(keyword) or {}
+                    target_media_id = kp.get("media_id") if isinstance(kp, dict) else None
+                    target_url = kp.get("url") if isinstance(kp, dict) else None
+                    if target_url:
+                        if not target_media_id or target_media_id != post_media_id:
+                            logger.info(f"Mot-cle {keyword} ignore: post {post_media_id} != cible {target_media_id}")
+                            continue
+                    await send_dm(comment_id, message, username, keyword, ACCESS_TOKEN)
+                    await reply_to_comment(comment_id, username, CONFIG.get("replies", []), ACCESS_TOKEN)
+                    break
 
     return {"status": "ok"}
 

@@ -1,4 +1,5 @@
 import os
+import re
 import httpx
 
 META_APP_ID = os.environ.get("META_APP_ID", "1445863310917375")
@@ -56,3 +57,36 @@ async def get_profile(access_token: str) -> dict:
     if resp.status_code != 200:
         return {"error": resp.text}
     return resp.json()
+
+
+def parse_shortcode(post_url: str) -> str | None:
+    if not post_url:
+        return None
+    m = re.search(r"/(p|reel|reels|tv)/([^/?#]+)", post_url)
+    return m.group(2) if m else None
+
+
+async def resolve_media_id(post_url: str, ig_user_id: str, access_token: str, max_pages: int = 10) -> str | None:
+    shortcode = parse_shortcode(post_url)
+    if not shortcode or not ig_user_id or not access_token:
+        return None
+
+    url = f"{GRAPH_URL}/v21.0/{ig_user_id}/media"
+    params: dict = {"fields": "id,permalink", "access_token": access_token, "limit": 100}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        for _ in range(max_pages):
+            resp = await client.get(url, params=params)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            for media in data.get("data", []):
+                permalink = media.get("permalink", "")
+                if f"/{shortcode}/" in permalink or permalink.endswith(f"/{shortcode}"):
+                    return str(media.get("id"))
+            next_url = data.get("paging", {}).get("next")
+            if not next_url:
+                return None
+            url = next_url
+            params = {}
+    return None
