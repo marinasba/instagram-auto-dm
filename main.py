@@ -556,11 +556,11 @@ async def _resolve_posts_for_save(raw_posts, prev_posts, ig_user_id, access_toke
             continue
         seen_urls.add(url)
         prev = prev_by_url.get(url)
-        if prev and prev.get("media_id"):
+        if prev and prev.get("media_id") and prev.get("thumbnail"):
             out.append({
                 "url": url,
                 "media_id": prev["media_id"],
-                "thumbnail": prev.get("thumbnail"),
+                "thumbnail": prev["thumbnail"],
             })
             continue
         media_id = None
@@ -572,6 +572,8 @@ async def _resolve_posts_for_save(raw_posts, prev_posts, ig_user_id, access_toke
                 thumbnail = info.get("thumbnail")
             else:
                 logger.warning(f"URL non resolue: {url} (mot-cle {keyword_label})")
+        if not media_id and prev and prev.get("media_id"):
+            media_id = prev["media_id"]
         out.append({"url": url, "media_id": media_id, "thumbnail": thumbnail})
     return out
 
