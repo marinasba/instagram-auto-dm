@@ -667,6 +667,28 @@ async def get_logs(_=Depends(check_admin)):
     return recent_events[-50:]
 
 
+@app.get("/diag")
+async def diag(_=Depends(check_admin)):
+    user = db.get_user_by_email("contact@gariguettes.fr")
+    ig = db.get_instagram_account(user["id"]) if user else None
+    db_token = ig["access_token"] if ig else None
+    env_token = ACCESS_TOKEN
+    out = {"has_user": bool(user), "has_ig_account": bool(ig),
+           "ig_id_in_db": ig["instagram_id"] if ig else None,
+           "db_token_prefix": (db_token[:12] + "...") if db_token else None,
+           "env_token_prefix": (env_token[:12] + "...") if env_token else None,
+           "tokens_match": db_token == env_token if db_token else None}
+    async with httpx.AsyncClient() as c:
+        for label, tok in [("db_token", db_token), ("env_token", env_token)]:
+            if not tok:
+                out[label + "_test"] = "no token"
+                continue
+            r = await c.get(f"{GRAPH_API}/me",
+                            params={"fields": "id,username", "access_token": tok})
+            out[label + "_test"] = {"status": r.status_code, "body": r.text[:400]}
+    return out
+
+
 # ─── Admin interface ───
 
 ADMIN_HTML = """<!DOCTYPE html>
