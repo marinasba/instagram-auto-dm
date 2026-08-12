@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 import random
@@ -59,6 +60,13 @@ def _normalize_text(s: str) -> str:
         return ""
     decomposed = unicodedata.normalize("NFD", s)
     return "".join(c for c in decomposed if not unicodedata.combining(c)).upper().strip()
+
+
+def _keyword_matches(keyword: str, text_norm: str) -> bool:
+    kw_norm = _normalize_text(keyword)
+    if not kw_norm:
+        return False
+    return re.search(r'\b' + re.escape(kw_norm) + r'\b', text_norm) is not None
 
 
 def _normalize_keyword_posts(raw) -> list:
@@ -667,6 +675,17 @@ async def get_logs(_=Depends(check_admin)):
     return recent_events[-50:]
 
 
+@app.get("/diag2")
+async def diag2(_=Depends(check_admin)):
+    user = db.get_user_by_email("contact@gariguettes.fr")
+    if not user:
+        return {"error": "no user"}
+    kws = db.get_keywords(user["id"])
+    return [{"keyword": k["keyword"], "msg_len": len(k.get("message") or ""),
+             "msg_preview": (k.get("message") or "")[:60], "posts": k.get("posts")}
+            for k in kws if k["keyword"].upper() in ("TELEVISION", "FER", "TV")]
+
+
 @app.get("/diag")
 async def diag(_=Depends(check_admin)):
     user = db.get_user_by_email("contact@gariguettes.fr")
@@ -1023,7 +1042,7 @@ async def handle_webhook(request: Request):
                 kw_rows = db.get_keywords(user_id)
                 reply_texts = [r["text"] for r in db.get_replies(user_id)]
                 for kw in kw_rows:
-                    if _normalize_text(kw["keyword"]) not in comment_text_norm:
+                    if not _keyword_matches(kw["keyword"], comment_text_norm):
                         continue
                     posts = kw.get("posts") or []
                     if posts:
@@ -1037,7 +1056,7 @@ async def handle_webhook(request: Request):
             else:
                 keyword_posts = CONFIG.get("keyword_posts", {})
                 for keyword, message in CONFIG["keywords"].items():
-                    if _normalize_text(keyword) not in comment_text_norm:
+                    if not _keyword_matches(keyword, comment_text_norm):
                         continue
                     posts = _normalize_keyword_posts(keyword_posts.get(keyword))
                     if posts:
