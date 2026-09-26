@@ -44,7 +44,7 @@ Serveur Python (heberge sur Railway)
   - `VERIFY_TOKEN` = token de verification du webhook Meta (valeur : `gariguettes_secret_2026`)
   - `ACCESS_TOKEN` = token Instagram API (commence par `IGAAOV9...`, genere depuis Meta Developer)
   - `ADMIN_TOKEN` = si non defini, utilise la meme valeur que VERIFY_TOKEN
-  - `GITHUB_TOKEN` = token GitHub pour sauvegarder automatiquement les changements admin dans le repo (commence par `gho_...`)
+  - `GITHUB_TOKEN` = `<STOCKE_DANS_RAILWAY_ENV>` (token GitHub pour sauvegarder automatiquement les changements admin dans le repo — voir Variables Railway)
 - **Deploiement** : automatique a chaque push sur GitHub (branche `main`)
 - **Sauvegarde auto** : quand on modifie les mots-cles via l'admin, les changements sont automatiquement sauvegardes sur GitHub (via GITHUB_TOKEN). Pas de perte de donnees au redeploiement.
 
